@@ -1,12 +1,9 @@
+// labRoutes.js
 import toObjectId from "../../utils/db.js";
 
-// ── JSON Schemas ──────────────────────────────────────────────────────────────
-const OID = {
-  type: "string",
-  minLength: 24,
-  maxLength: 24,
-  pattern: "^[a-fA-F0-9]{24}$",
-};
+// ─── JSON Schemas ──────────────────────────────────────────────────────────
+
+const OID = { type: "string", minLength: 24, maxLength: 24, pattern: "^[a-fA-F0-9]{24}$" };
 
 const idParam = {
   type: "object",
@@ -42,7 +39,8 @@ const contactSchema = {
 const billingSchema = {
   type: "object",
   properties: {
-    perInvoiceFee: { type: "number", minimum: 0 },
+    feePerInvoice: { type: "number", minimum: 0 },
+    forceInvoiceFee: { type: "boolean", default: false },
     monthlyFee: { type: "number", minimum: 0 },
     commission: { type: "number", minimum: 0 },
   },
@@ -54,7 +52,7 @@ const createLabBody = {
   required: ["name", "labKey", "contact", "billing"],
   properties: {
     name: { type: "string", minLength: 1 },
-    labKey: { type: "string", minLength: 5, maxLength: 5, pattern: "^[0-9]{5}$" },
+    labKey: { type: "string", minLength: 1, maxLength: 5, pattern: "^[0-9]{1,5}$" },
     type: { type: "string", enum: ["diagnostic", "hospital"] },
     registrationNumber: { type: "string" },
     contact: contactSchema,
@@ -64,19 +62,12 @@ const createLabBody = {
   additionalProperties: false,
 };
 
-const updateLabBody = {
-  type: "object",
-  properties: { name: { type: "string", minLength: 1 } },
-  additionalProperties: false,
-};
-
-const updateInfoBody = {
+const updateDetailsBody = {
   type: "object",
   properties: {
     name: { type: "string", minLength: 1 },
     type: { type: "string", enum: ["diagnostic", "hospital"] },
     registrationNumber: { type: "string" },
-    contact: contactSchema,
   },
   additionalProperties: false,
 };
@@ -95,7 +86,50 @@ const updateBillingBody = {
   additionalProperties: false,
 };
 
-// ── Helper ────────────────────────────────────────────────────────────────────
+// ─── Route Schemas ─────────────────────────────────────────────────────────
+
+const listLabsSchema = {
+  tags: ["Lab"],
+  summary: "List labs (paginated, search by labKey)",
+  querystring: paginationQuery,
+};
+const statsLabSchema = { tags: ["Lab"], summary: "Get lab stats (total, active, inactive, revenue)" };
+const getLabSchema = { tags: ["Lab"], summary: "Get a lab by ID", params: idParam };
+const createLabSchema = { tags: ["Lab"], summary: "Create a new lab", body: createLabBody };
+const updateDetailsSchema = {
+  tags: ["Lab"],
+  summary: "Update Lab Details — name, type, registrationNumber",
+  params: idParam,
+  body: updateDetailsBody,
+};
+const updateContactSchema = { tags: ["Lab"], summary: "Update lab contact", params: idParam, body: updateContactBody };
+const updateBillingSchema = {
+  tags: ["Lab"],
+  summary: "Update lab billing — feePerInvoice, forceInvoiceFee, monthlyFee, commission",
+  params: idParam,
+  body: updateBillingBody,
+};
+const activateLabSchema = { tags: ["Lab"], summary: "Activate a lab", params: idParam };
+const deactivateLabSchema = { tags: ["Lab"], summary: "Deactivate a lab", params: idParam };
+const deleteLabSchema = { tags: ["Lab"], summary: "Delete a lab", params: idParam };
+
+// Staff (view-only) schemas
+const labIdParam = { type: "object", additionalProperties: false, properties: { labId: OID } };
+const labStaffParam = { type: "object", additionalProperties: false, properties: { labId: OID, id: OID } };
+
+const listStaffSchema = {
+  tags: ["Staff"],
+  summary: "List all staff & admins of a lab (view only)",
+  params: labIdParam,
+};
+const getStaffByIdSchema = {
+  tags: ["Staff"],
+  summary: "Get a staff member by ID (view only)",
+  params: labStaffParam,
+};
+
+// ─── Helpers ──────────────────────────────────────────────────────────────
+
 function normalizeContact(contact) {
   if (!contact) return contact;
   const c = { ...contact };
@@ -107,37 +141,29 @@ function normalizeContact(contact) {
   return c;
 }
 
-// ── Route Schemas ─────────────────────────────────────────────────────────────
-const listLabsSchema = {
-  tags: ["Lab"],
-  summary: "List labs (paginated, search by labKey)",
-  querystring: paginationQuery,
-};
-const statsLabSchema = { tags: ["Lab"], summary: "Get lab stats (total, active, inactive, revenue)" };
-const getLabSchema = { tags: ["Lab"], summary: "Get a lab by ID", params: idParam };
-const createLabSchema = { tags: ["Lab"], summary: "Create a new lab", body: createLabBody };
-const updateLabSchema = { tags: ["Lab"], summary: "Update lab name", params: idParam, body: updateLabBody };
-const updateInfoSchema = {
-  tags: ["Lab"],
-  summary: "Update lab name, type, registrationNumber and contact",
-  params: idParam,
-  body: updateInfoBody,
-};
-const updateContactSchema = { tags: ["Lab"], summary: "Update lab contact", params: idParam, body: updateContactBody };
-const updateBillingSchema = { tags: ["Lab"], summary: "Update lab billing", params: idParam, body: updateBillingBody };
-const activateLabSchema = { tags: ["Lab"], summary: "Activate a lab", params: idParam };
-const deactivateLabSchema = { tags: ["Lab"], summary: "Deactivate a lab", params: idParam };
-const deleteLabSchema = { tags: ["Lab"], summary: "Delete a lab", params: idParam };
-
-// ── Routes ────────────────────────────────────────────────────────────────────
-export default async function labRoutes(fastify) {
-  function col() {
-    return fastify.mongo.db.collection("labs");
+const resolveLab = async (rawLabId, reply, col) => {
+  const oid = toObjectId(rawLabId);
+  if (!oid) {
+    reply.code(400).send({ message: "Invalid lab ID format" });
+    return null;
   }
+  const lab = await col.findOne({ _id: oid }, { projection: { _id: 1, labKey: 1 } });
+  if (!lab) {
+    reply.code(404).send({ message: "Lab not found" });
+    return null;
+  }
+  return { _id: oid, labKey: Number(lab.labKey) };
+};
+
+// ─── Main Plugin ────────────────────────────────────────────────────────────
+
+export default async function labRoutes(fastify) {
+  const labs = () => fastify.mongo.db.collection("labs");
+  const staffs = () => fastify.mongo.db.collection("staffs");
 
   // GET /labs/stats
   fastify.get("/labs/stats", { schema: statsLabSchema }, async () => {
-    const [result] = await col()
+    const [result] = await labs()
       .aggregate([
         {
           $group: {
@@ -146,7 +172,7 @@ export default async function labRoutes(fastify) {
             active: { $sum: { $cond: ["$isActive", 1, 0] } },
             inactive: { $sum: { $cond: ["$isActive", 0, 1] } },
             totalMonthly: { $sum: { $ifNull: ["$billing.monthlyFee", 0] } },
-            totalInvoice: { $sum: { $ifNull: ["$billing.perInvoiceFee", 0] } },
+            totalInvoice: { $sum: { $ifNull: ["$billing.feePerInvoice", 0] } },
           },
         },
       ])
@@ -179,8 +205,8 @@ export default async function labRoutes(fastify) {
     }
 
     const [data, total] = await Promise.all([
-      col().find(filter).skip(skip).limit(limit).sort({ createdAt: -1 }).toArray(),
-      col().countDocuments(filter),
+      labs().find(filter).skip(skip).limit(limit).sort({ createdAt: -1 }).toArray(),
+      labs().countDocuments(filter),
     ]);
 
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
@@ -190,7 +216,7 @@ export default async function labRoutes(fastify) {
   fastify.get("/labs/:id", { schema: getLabSchema }, async (request, reply) => {
     const oid = toObjectId(request.params.id);
     if (!oid) return reply.code(400).send({ message: "Invalid ID format" });
-    const lab = await col().findOne({ _id: oid });
+    const lab = await labs().findOne({ _id: oid });
     if (!lab) return reply.code(404).send({ message: "Lab not found" });
     return lab;
   });
@@ -206,7 +232,7 @@ export default async function labRoutes(fastify) {
       return reply.code(400).send({ message: e.message });
     }
 
-    const existing = await col().findOne({ labKey });
+    const existing = await labs().findOne({ labKey });
     if (existing) return reply.code(409).send({ message: `Lab ID "${labKey}" already exists` });
 
     const doc = {
@@ -215,59 +241,31 @@ export default async function labRoutes(fastify) {
       type: type ?? null,
       registrationNumber: registrationNumber ?? null,
       contact,
-      billing,
+      billing: { forceInvoiceFee: false, ...billing },
       isActive,
       createdAt: new Date(),
     };
 
-    const result = await col().insertOne(doc);
-    const created = await col().findOne({ _id: result.insertedId });
+    const result = await labs().insertOne(doc);
+    const created = await labs().findOne({ _id: result.insertedId });
     return reply.code(201).send(created);
   });
 
-  // PATCH /labs/:id — name only
-  fastify.patch("/labs/:id", { schema: updateLabSchema }, async (request, reply) => {
-    const oid = toObjectId(request.params.id);
-    if (!oid) return reply.code(400).send({ message: "Invalid ID format" });
-    if (!request.body.name) return reply.code(400).send({ message: "Nothing to update" });
-    const result = await col().findOneAndUpdate(
-      { _id: oid },
-      { $set: { name: request.body.name } },
-      { returnDocument: "after" },
-    );
-    if (!result) return reply.code(404).send({ message: "Lab not found" });
-    return result;
-  });
-
-  // PATCH /labs/:id/info — name + type + registrationNumber + full contact
-  fastify.patch("/labs/:id/info", { schema: updateInfoSchema }, async (request, reply) => {
+  // PATCH /labs/:id/details
+  fastify.patch("/labs/:id/details", { schema: updateDetailsSchema }, async (request, reply) => {
     const oid = toObjectId(request.params.id);
     if (!oid) return reply.code(400).send({ message: "Invalid ID format" });
 
     const $set = {};
     if (request.body.name) $set.name = request.body.name;
-
-    // type: allow clearing by sending null / empty string
-    if ("type" in request.body) {
-      $set.type = request.body.type || null;
-    }
-
-    // registrationNumber: allow clearing by sending null / empty string
+    if ("type" in request.body) $set.type = request.body.type || null;
     if ("registrationNumber" in request.body) {
       $set.registrationNumber = request.body.registrationNumber || null;
     }
 
-    if (request.body.contact) {
-      try {
-        $set.contact = normalizeContact(request.body.contact);
-      } catch (e) {
-        return reply.code(400).send({ message: e.message });
-      }
-    }
-
     if (!Object.keys($set).length) return reply.code(400).send({ message: "Nothing to update" });
 
-    const result = await col().findOneAndUpdate({ _id: oid }, { $set }, { returnDocument: "after" });
+    const result = await labs().findOneAndUpdate({ _id: oid }, { $set }, { returnDocument: "after" });
     if (!result) return reply.code(404).send({ message: "Lab not found" });
     return result;
   });
@@ -284,7 +282,7 @@ export default async function labRoutes(fastify) {
       return reply.code(400).send({ message: e.message });
     }
 
-    const result = await col().findOneAndUpdate({ _id: oid }, { $set: { contact } }, { returnDocument: "after" });
+    const result = await labs().findOneAndUpdate({ _id: oid }, { $set: { contact } }, { returnDocument: "after" });
     if (!result) return reply.code(404).send({ message: "Lab not found" });
     return result;
   });
@@ -293,7 +291,7 @@ export default async function labRoutes(fastify) {
   fastify.patch("/labs/:id/billing", { schema: updateBillingSchema }, async (request, reply) => {
     const oid = toObjectId(request.params.id);
     if (!oid) return reply.code(400).send({ message: "Invalid ID format" });
-    const result = await col().findOneAndUpdate(
+    const result = await labs().findOneAndUpdate(
       { _id: oid },
       { $set: { billing: request.body.billing } },
       { returnDocument: "after" },
@@ -306,7 +304,7 @@ export default async function labRoutes(fastify) {
   fastify.patch("/labs/:id/activate", { schema: activateLabSchema }, async (request, reply) => {
     const oid = toObjectId(request.params.id);
     if (!oid) return reply.code(400).send({ message: "Invalid ID format" });
-    const result = await col().findOneAndUpdate(
+    const result = await labs().findOneAndUpdate(
       { _id: oid },
       { $set: { isActive: true } },
       { returnDocument: "after" },
@@ -319,7 +317,7 @@ export default async function labRoutes(fastify) {
   fastify.patch("/labs/:id/deactivate", { schema: deactivateLabSchema }, async (request, reply) => {
     const oid = toObjectId(request.params.id);
     if (!oid) return reply.code(400).send({ message: "Invalid ID format" });
-    const result = await col().findOneAndUpdate(
+    const result = await labs().findOneAndUpdate(
       { _id: oid },
       { $set: { isActive: false } },
       { returnDocument: "after" },
@@ -332,8 +330,35 @@ export default async function labRoutes(fastify) {
   fastify.delete("/labs/:id", { schema: deleteLabSchema }, async (request, reply) => {
     const oid = toObjectId(request.params.id);
     if (!oid) return reply.code(400).send({ message: "Invalid ID format" });
-    const result = await col().deleteOne({ _id: oid });
+    const result = await labs().deleteOne({ _id: oid });
     if (result.deletedCount === 0) return reply.code(404).send({ message: "Lab not found" });
     return { message: "Lab deleted successfully" };
+  });
+
+  // =========================================================================
+  //  STAFF ENDPOINTS (view only)
+  // =========================================================================
+
+  // GET /labs/:labId/staff
+  fastify.get("/labs/:labId/staff", { schema: listStaffSchema }, async (req, reply) => {
+    const lab = await resolveLab(req.params.labId, reply, labs());
+    if (!lab) return;
+    return staffs()
+      .find({ labId: lab._id, "deletion.status": { $ne: true } })
+      .sort({ role: 1, name: 1 })
+      .toArray();
+  });
+
+  // GET /labs/:labId/staff/:id
+  fastify.get("/labs/:labId/staff/:id", { schema: getStaffByIdSchema }, async (req, reply) => {
+    const lab = await resolveLab(req.params.labId, reply, labs());
+    if (!lab) return;
+
+    const staffId = toObjectId(req.params.id);
+    if (!staffId) return reply.code(400).send({ message: "Invalid staff ID format" });
+
+    const member = await staffs().findOne({ _id: staffId, labId: lab._id, "deletion.status": { $ne: true } });
+    if (!member) return reply.code(404).send({ message: "Staff member not found" });
+    return member;
   });
 }

@@ -1,0 +1,98 @@
+import fastifyJwt from "@fastify/jwt";
+import fastifyCookie from "@fastify/cookie";
+import crypto from "crypto";
+import fp from "fastify-plugin";
+
+async function authPlugin(fastify) {
+  const ACCESS_SECRET = process.env.JWT_SECRET;
+  const REFRESH_SECRET = process.env.REFRESH_SECRET;
+  const ACCESS_EXPIRY = process.env.JWT_ACCESS_EXPIRY;
+  const REFRESH_EXPIRY = process.env.JWT_REFRESH_EXPIRY;
+  const COOKIE_SECRET = process.env.COOKIE_SECRET;
+
+  if (!ACCESS_SECRET || !REFRESH_SECRET || !ACCESS_EXPIRY || !REFRESH_EXPIRY || !COOKIE_SECRET) {
+    throw new Error(
+      "JWT_SECRET, REFRESH_SECRET, JWT_ACCESS_EXPIRY, JWT_REFRESH_EXPIRY and COOKIE_SECRET " +
+        "environment variables are required for authentication",
+    );
+  }
+
+  const parseExpiry = (expiry) => {
+    const units = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
+    const match = expiry.match(/^(\d+)([smhd])$/);
+    if (!match) throw new Error(`Invalid JWT_REFRESH_EXPIRY format: "${expiry}". Use formats like "7d", "15m", "1h".`);
+    return parseInt(match[1]) * units[match[2]];
+  };
+
+  const REFRESH_EXPIRY_MS = parseExpiry(REFRESH_EXPIRY);
+
+  await fastify.register(fastifyJwt, {
+    secret: ACCESS_SECRET,
+    sign: { expiresIn: ACCESS_EXPIRY },
+  });
+
+  // Required for req.cookies / reply.setCookie / reply.clearCookie,
+  // used by the admin login/refresh/logout routes.
+  await fastify.register(fastifyCookie, {
+    secret: COOKIE_SECRET,
+  });
+
+  // 444 = expired/invalid access token → frontend will attempt refresh
+  fastify.decorate("authenticate", async (req, reply) => {
+    try {
+      await req.jwtVerify();
+    } catch {
+      return reply.code(444).send({ error: "Access token invalid or expired" });
+    }
+  });
+
+  fastify.decorate("authorize", (permission) => async (req, reply) => {
+    if (req.user.role === "admin") return;
+    if (!req.user.permissions?.[permission]) {
+      return reply.code(403).send({ error: "Forbidden: Missing required permission" });
+    }
+  });
+
+  fastify.decorate("requireModule", (moduleName) => async (req, reply) => {
+    if (req.user.role === "admin") return;
+    if (!req.user.modules?.includes(moduleName)) {
+      return reply.code(403).send({ error: "Forbidden: Missing required module access" });
+    }
+  });
+
+  fastify.decorate("requireAdmin", async (req, reply) => {
+    if (req.user.role !== "admin") {
+      return reply.code(403).send({ error: "Forbidden: Admins only" });
+    }
+  });
+
+  // Verifies the access token AND checks role === "system-admin" in one
+  // step — used as the onRequest guard on /admin/logout-all.
+  fastify.decorate("authenticateAdmin", async (req, reply) => {
+    try {
+      await req.jwtVerify();
+    } catch {
+      return reply.code(444).send({ error: "Access token invalid or expired" });
+    }
+    if (req.user?.role !== "system-admin") {
+      return reply.code(403).send({ error: "Forbidden: System admins only" });
+    }
+  });
+
+  fastify.decorate("hashToken", (token) => crypto.createHash("sha256").update(token).digest("hex"));
+  fastify.decorate("REFRESH_SECRET", REFRESH_SECRET);
+  fastify.decorate("REFRESH_EXPIRY", REFRESH_EXPIRY);
+  fastify.decorate("REFRESH_EXPIRY_MS", REFRESH_EXPIRY_MS);
+
+  // ✅ sameSite: "none" + secure: true → required for cross-origin cookies
+  // ✅ maxAge → cookie survives browser restarts, won't be a session cookie
+  fastify.decorate("cookieOptions", {
+    httpOnly: true,
+    path: "/",
+    sameSite: "none",
+    secure: true,
+    maxAge: Math.floor(REFRESH_EXPIRY_MS / 1000),
+  });
+}
+
+export default fp(authPlugin);

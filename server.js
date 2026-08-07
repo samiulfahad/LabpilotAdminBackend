@@ -7,12 +7,14 @@ import cors from "@fastify/cors";
 import cron from "node-cron";
 
 import mongoPlugin from "./plugins/mongo.js";
+import authPlugin from "./plugins/auth.js";
+import authRoutes from "./routes/auth/auth.js";
 import categoryRoutes from "./routes/category/category.js";
 import testRoutes from "./routes/test/test.js";
 import labRoutes from "./routes/lab/lab.js";
 import zoneRoutes from "./routes/zone/zone.js";
-import staffRoutes from "./routes/staff/staff.js";
 import testSchemaRoutes from "./routes/testSchema/testSchema.js";
+import staticDataRoutes from "./routes/staticData/staticData.js";
 import demoReportRoutes from "./routes/demoReport/demoReport.js";
 import billingRoutes from "./routes/billing/billing.js";
 import { generateMonthlyBills } from "./jobs/generateMonthlyBills.js";
@@ -31,20 +33,23 @@ const fastify = Fastify({
 await fastify.register(cors, {
   origin: ["https://lpadmin.netlify.app", "http://localhost:5173"],
   methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+   credentials: true,
 });
 
 // ── Plugins ───────────────────────────────────────────────────────────────────
 await fastify.register(mongoPlugin);
+await fastify.register(authPlugin);
 
 // ── Routes ────────────────────────────────────────────────────────────────────
-const API = "/api/v1";
+const API = "/v1";
 
+fastify.register(authRoutes, { prefix: API });
 fastify.register(categoryRoutes, { prefix: API });
 fastify.register(testRoutes, { prefix: API });
 fastify.register(labRoutes, { prefix: API });
 fastify.register(zoneRoutes, { prefix: API });
-fastify.register(staffRoutes, { prefix: API });
 fastify.register(testSchemaRoutes, { prefix: API });
+fastify.register(staticDataRoutes, { prefix: API });
 fastify.register(demoReportRoutes, { prefix: API });
 fastify.register(billingRoutes, { prefix: API });
 
