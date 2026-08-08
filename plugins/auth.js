@@ -8,11 +8,10 @@ async function authPlugin(fastify) {
   const REFRESH_SECRET = process.env.REFRESH_SECRET;
   const ACCESS_EXPIRY = process.env.JWT_ACCESS_EXPIRY;
   const REFRESH_EXPIRY = process.env.JWT_REFRESH_EXPIRY;
-  const COOKIE_SECRET = process.env.COOKIE_SECRET;
 
-  if (!ACCESS_SECRET || !REFRESH_SECRET || !ACCESS_EXPIRY || !REFRESH_EXPIRY || !COOKIE_SECRET) {
+  if (!ACCESS_SECRET || !REFRESH_SECRET || !ACCESS_EXPIRY || !REFRESH_EXPIRY) {
     throw new Error(
-      "JWT_SECRET, REFRESH_SECRET, JWT_ACCESS_EXPIRY, JWT_REFRESH_EXPIRY and COOKIE_SECRET " +
+      "JWT_SECRET, REFRESH_SECRET, JWT_ACCESS_EXPIRY and JWT_REFRESH_EXPIRY " +
         "environment variables are required for authentication",
     );
   }
@@ -33,9 +32,7 @@ async function authPlugin(fastify) {
 
   // Required for req.cookies / reply.setCookie / reply.clearCookie,
   // used by the admin login/refresh/logout routes.
-  await fastify.register(fastifyCookie, {
-    secret: COOKIE_SECRET,
-  });
+  await fastify.register(fastifyCookie);
 
   // 444 = expired/invalid access token → frontend will attempt refresh
   fastify.decorate("authenticate", async (req, reply) => {

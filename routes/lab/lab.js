@@ -47,6 +47,17 @@ const billingSchema = {
   additionalProperties: false,
 };
 
+const limitSchema = {
+  type: "object",
+  properties: {
+    maxStaff: { type: "integer", minimum: 0 },
+    maxProduct: { type: "integer", minimum: 0 },
+    maxService: { type: "integer", minimum: 0 },
+    maxMedicine: { type: "integer", minimum: 0 },
+  },
+  additionalProperties: false,
+};
+
 const createLabBody = {
   type: "object",
   required: ["name", "labKey", "contact", "billing"],
@@ -57,6 +68,7 @@ const createLabBody = {
     registrationNumber: { type: "string" },
     contact: contactSchema,
     billing: billingSchema,
+    limit: limitSchema,
     isActive: { type: "boolean", default: true },
   },
   additionalProperties: false,
@@ -86,6 +98,13 @@ const updateBillingBody = {
   additionalProperties: false,
 };
 
+const updateLimitBody = {
+  type: "object",
+  required: ["limit"],
+  properties: { limit: limitSchema },
+  additionalProperties: false,
+};
+
 // ─── Route Schemas ─────────────────────────────────────────────────────────
 
 const listLabsSchema = {
@@ -108,6 +127,12 @@ const updateBillingSchema = {
   summary: "Update lab billing — feePerInvoice, forceInvoiceFee, monthlyFee, commission",
   params: idParam,
   body: updateBillingBody,
+};
+const updateLimitSchema = {
+  tags: ["Lab"],
+  summary: "Update Lab Limits — maxStaff, maxProduct, maxService, maxMedicine",
+  params: idParam,
+  body: updateLimitBody,
 };
 const activateLabSchema = { tags: ["Lab"], summary: "Activate a lab", params: idParam };
 const deactivateLabSchema = { tags: ["Lab"], summary: "Deactivate a lab", params: idParam };
@@ -242,6 +267,7 @@ export default async function labRoutes(fastify) {
       registrationNumber: registrationNumber ?? null,
       contact,
       billing: { forceInvoiceFee: false, ...billing },
+      limit: { maxStaff: 0, maxProduct: 0, maxService: 0, maxMedicine: 0, ...request.body.limit },
       isActive,
       createdAt: new Date(),
     };
@@ -294,6 +320,19 @@ export default async function labRoutes(fastify) {
     const result = await labs().findOneAndUpdate(
       { _id: oid },
       { $set: { billing: request.body.billing } },
+      { returnDocument: "after" },
+    );
+    if (!result) return reply.code(404).send({ message: "Lab not found" });
+    return result;
+  });
+
+  // PATCH /labs/:id/limit
+  fastify.patch("/labs/:id/limit", { schema: updateLimitSchema }, async (request, reply) => {
+    const oid = toObjectId(request.params.id);
+    if (!oid) return reply.code(400).send({ message: "Invalid ID format" });
+    const result = await labs().findOneAndUpdate(
+      { _id: oid },
+      { $set: { limit: request.body.limit } },
       { returnDocument: "after" },
     );
     if (!result) return reply.code(404).send({ message: "Lab not found" });

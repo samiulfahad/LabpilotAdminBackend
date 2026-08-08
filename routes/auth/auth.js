@@ -25,6 +25,13 @@ const isValidFavoriteWord = (word) => typeof word === "string" && FAVORITE_WORDS
 
 const MAX_ADMIN_SESSIONS = 3;
 
+// 30s grace window for refresh-token rotation races (e.g. two tabs
+// refreshing near-simultaneously). Only the IMMEDIATELY PRIOR token for a
+// given session may be replayed inside this window — matched by hash, not
+// by "some session on this device was recently active" — so a stolen but
+// already-rotated-away token from an earlier cycle is still rejected.
+const REFRESH_GRACE_WINDOW_MS = 30_000;
+
 const deviceSchemaProps = {
   type: "object",
   additionalProperties: false,
@@ -58,9 +65,30 @@ const loginSchema = {
   },
 };
 
+// ── Activate/deactivate lab schema ───────────────────────────────────────
+const labStatusSchema = {
+  schema: {
+    tags: ["Admin", "Labs"],
+    summary: "Activate or deactivate a lab",
+    params: {
+      type: "object",
+      required: ["labId"],
+      properties: { labId: { type: "string" } },
+    },
+    body: {
+      type: "object",
+      required: ["isActive"],
+      additionalProperties: false,
+      properties: { isActive: { type: "boolean" } },
+    },
+  },
+};
+
 async function authRoutes(fastify) {
   const adminsCollection = () => fastify.mongo.db.collection("theGreatKingo");
   const tokensCollection = () => fastify.mongo.db.collection("theGreatKingoTokens");
+  // NOTE: assumed collection name "labs" — rename if yours differs.
+  const labsCollection = () => fastify.mongo.db.collection("labs");
 
   // ── POST /admin/login ─────────────────────────────────────────────────
   fastify.post("/admin/login", loginSchema, async (req, reply) => {
@@ -122,6 +150,7 @@ async function authRoutes(fastify) {
       adminId: toObjectId(payload.id),
       deviceId,
       refreshToken: fastify.hashToken(refreshTokenPlain),
+      previousRefreshTokenHash: null,
       device: deviceInfo,
       createdAt: new Date(),
       lastUsedAt: new Date(),
@@ -156,47 +185,30 @@ async function authRoutes(fastify) {
       role: "system-admin",
     };
 
-    const existingSession = await tokensCollection().findOne({
+    const presentedHash = fastify.hashToken(adminRefreshToken);
+
+    // Matches either:
+    //  (a) the CURRENT refresh token for this session — normal case, or
+    //  (b) the IMMEDIATELY PRIOR token, but only within the grace window —
+    //      covers a legitimate rotation race (e.g. two tabs refreshing at
+    //      once). Matching by hash (not just "session was recently active")
+    //      means a stolen token from an earlier, already-superseded cycle
+    //      is rejected even inside the same 30s window.
+    const session = await tokensCollection().findOne({
       adminId: toObjectId(payload.id),
       deviceId: adminDeviceId,
-      refreshToken: fastify.hashToken(adminRefreshToken),
       expiresAt: { $gt: new Date() },
+      $or: [
+        { refreshToken: presentedHash },
+        {
+          previousRefreshTokenHash: presentedHash,
+          lastUsedAt: { $gt: new Date(Date.now() - REFRESH_GRACE_WINDOW_MS) },
+        },
+      ],
     });
 
-    // 30s grace window: covers the case where a rotated token was already
-    // swapped by a near-simultaneous request (e.g. two tabs refreshing at
-    // once) before this one arrived.
-    if (!existingSession) {
-      const recentSession = await tokensCollection().findOne({
-        adminId: toObjectId(payload.id),
-        deviceId: adminDeviceId,
-        lastUsedAt: { $gt: new Date(Date.now() - 30_000) },
-        expiresAt: { $gt: new Date() },
-      });
-
-      if (!recentSession) {
-        return reply.code(445).send({ error: "Session expired or revoked" });
-      }
-
-      const newRefreshTokenPlain = await fastify.jwt.sign(payload, {
-        key: fastify.REFRESH_SECRET,
-        expiresIn: fastify.REFRESH_EXPIRY,
-      });
-
-      await tokensCollection().updateOne(
-        { _id: recentSession._id },
-        {
-          $set: {
-            refreshToken: fastify.hashToken(newRefreshTokenPlain),
-            lastUsedAt: new Date(),
-            expiresAt: new Date(Date.now() + fastify.REFRESH_EXPIRY_MS),
-          },
-        },
-      );
-
-      const newAccessToken = await reply.jwtSign(payload);
-      reply.setCookie("adminRefreshToken", newRefreshTokenPlain, fastify.cookieOptions);
-      return { accessToken: newAccessToken };
+    if (!session) {
+      return reply.code(445).send({ error: "Session expired or revoked" });
     }
 
     const newRefreshTokenPlain = await fastify.jwt.sign(payload, {
@@ -205,10 +217,11 @@ async function authRoutes(fastify) {
     });
 
     await tokensCollection().updateOne(
-      { _id: existingSession._id },
+      { _id: session._id },
       {
         $set: {
           refreshToken: fastify.hashToken(newRefreshTokenPlain),
+          previousRefreshTokenHash: presentedHash,
           lastUsedAt: new Date(),
           expiresAt: new Date(Date.now() + fastify.REFRESH_EXPIRY_MS),
         },
@@ -333,6 +346,32 @@ async function authRoutes(fastify) {
       await adminsCollection().updateOne({ _id: admin._id }, { $set: { password: newHash } });
 
       return { message: "Password changed successfully" };
+    },
+  );
+
+  // ── PATCH /admin/labs/:labId/status ────────────────────────────────────
+  // Activate or deactivate a lab. Body: { isActive: boolean }
+  fastify.patch(
+    "/admin/labs/:labId/status",
+    { onRequest: [fastify.authenticateAdmin], ...labStatusSchema },
+    async (req, reply) => {
+      const { labId } = req.params;
+      const { isActive } = req.body;
+
+      const result = await labsCollection().findOneAndUpdate(
+        { _id: toObjectId(labId) },
+        { $set: { isActive, statusUpdatedAt: new Date(), statusUpdatedBy: req.user.id } },
+        { returnDocument: "after" },
+      );
+
+      if (!result) {
+        return reply.code(404).send({ error: "Lab not found" });
+      }
+
+      return {
+        message: isActive ? "Lab activated" : "Lab deactivated",
+        lab: { _id: result._id, labKey: result.labKey, name: result.name, isActive: result.isActive },
+      };
     },
   );
 }
