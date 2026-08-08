@@ -54,6 +54,9 @@ const limitSchema = {
     maxProduct: { type: "integer", minimum: 0 },
     maxService: { type: "integer", minimum: 0 },
     maxMedicine: { type: "integer", minimum: 0 },
+    maxReferrer: { type: "integer", minimum: 0 },
+    maxDoctor: { type: "integer", minimum: 0 },
+    maxAdmissionSpace: { type: "integer", minimum: 0 },
   },
   additionalProperties: false,
 };
@@ -130,7 +133,8 @@ const updateBillingSchema = {
 };
 const updateLimitSchema = {
   tags: ["Lab"],
-  summary: "Update Lab Limits — maxStaff, maxProduct, maxService, maxMedicine",
+  summary:
+    "Update Lab Limits — maxStaff, maxProduct, maxService, maxMedicine, maxReferrer, maxDoctor, maxAdmissionSpace",
   params: idParam,
   body: updateLimitBody,
 };
@@ -267,7 +271,16 @@ export default async function labRoutes(fastify) {
       registrationNumber: registrationNumber ?? null,
       contact,
       billing: { forceInvoiceFee: false, ...billing },
-      limit: { maxStaff: 0, maxProduct: 0, maxService: 0, maxMedicine: 0, ...request.body.limit },
+      limit: {
+        maxStaff: 0,
+        maxProduct: 0,
+        maxService: 0,
+        maxMedicine: 0,
+        maxReferrer: 0,
+        maxDoctor: 0,
+        maxAdmissionSpace: 0,
+        ...request.body.limit,
+      },
       isActive,
       createdAt: new Date(),
     };
