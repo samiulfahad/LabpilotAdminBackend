@@ -50,12 +50,6 @@ async function authPlugin(fastify) {
     }
   });
 
-  fastify.decorate("requireModule", (moduleName) => async (req, reply) => {
-    if (req.user.role === "admin") return;
-    if (!req.user.modules?.includes(moduleName)) {
-      return reply.code(403).send({ error: "Forbidden: Missing required module access" });
-    }
-  });
 
   fastify.decorate("requireAdmin", async (req, reply) => {
     if (req.user.role !== "admin") {
@@ -63,18 +57,7 @@ async function authPlugin(fastify) {
     }
   });
 
-  // Verifies the access token AND checks role === "system-admin" in one
-  // step — used as the onRequest guard on /admin/logout-all.
-  fastify.decorate("authenticateAdmin", async (req, reply) => {
-    try {
-      await req.jwtVerify();
-    } catch {
-      return reply.code(444).send({ error: "Access token invalid or expired" });
-    }
-    if (req.user?.role !== "system-admin") {
-      return reply.code(403).send({ error: "Forbidden: System admins only" });
-    }
-  });
+
 
   fastify.decorate("hashToken", (token) => crypto.createHash("sha256").update(token).digest("hex"));
   fastify.decorate("REFRESH_SECRET", REFRESH_SECRET);

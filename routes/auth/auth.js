@@ -47,6 +47,8 @@ const deviceSchemaProps = {
   },
 };
 
+// ── Route schemas ─────────────────────────────────────────────────────────
+
 const loginSchema = {
   schema: {
     tags: ["Auth"],
@@ -65,21 +67,67 @@ const loginSchema = {
   },
 };
 
-// ── Activate/deactivate lab schema ───────────────────────────────────────
-const labStatusSchema = {
+const refreshSchema = {
   schema: {
-    tags: ["Admin", "Labs"],
-    summary: "Activate or deactivate a lab",
+    tags: ["Auth"],
+    summary: "Rotate refresh token and issue a new access token",
+  },
+};
+
+const logoutSchema = {
+  schema: {
+    tags: ["Auth"],
+    summary: "Log out the current device",
+  },
+};
+
+const logoutAllSchema = {
+  schema: {
+    tags: ["Auth"],
+    summary: "Log out all devices for the current admin",
+  },
+};
+
+const meSchema = {
+  schema: {
+    tags: ["Auth"],
+    summary: "Get the current admin's profile",
+  },
+};
+
+const sessionsSchema = {
+  schema: {
+    tags: ["Auth"],
+    summary: "List active sessions for the current admin",
+  },
+};
+
+const deleteSessionSchema = {
+  schema: {
+    tags: ["Auth"],
+    summary: "Revoke a specific device's session",
     params: {
       type: "object",
-      required: ["labId"],
-      properties: { labId: { type: "string" } },
+      required: ["deviceId"],
+      properties: {
+        deviceId: { type: "string", minLength: 1, maxLength: 100 },
+      },
     },
+  },
+};
+
+const changePasswordSchema = {
+  schema: {
+    tags: ["Auth"],
+    summary: "Change the current admin's password",
     body: {
       type: "object",
-      required: ["isActive"],
+      required: ["currentPassword", "newPassword"],
       additionalProperties: false,
-      properties: { isActive: { type: "boolean" } },
+      properties: {
+        currentPassword: { type: "string", minLength: 1, maxLength: 100 },
+        newPassword: { type: "string", minLength: 6, maxLength: 100 },
+      },
     },
   },
 };
@@ -87,8 +135,6 @@ const labStatusSchema = {
 async function authRoutes(fastify) {
   const adminsCollection = () => fastify.mongo.db.collection("theGreatKingo");
   const tokensCollection = () => fastify.mongo.db.collection("theGreatKingoTokens");
-  // NOTE: assumed collection name "labs" — rename if yours differs.
-  const labsCollection = () => fastify.mongo.db.collection("labs");
 
   // ── POST /admin/login ─────────────────────────────────────────────────
   fastify.post("/admin/login", loginSchema, async (req, reply) => {
@@ -111,7 +157,7 @@ async function authRoutes(fastify) {
       id: admin._id.toString(),
       username: admin.username,
       phone: admin.phone,
-      role: "system-admin",
+      role: "admin",
     };
 
     const deviceId = randomUUID();
@@ -158,22 +204,22 @@ async function authRoutes(fastify) {
     });
 
     reply
-      .setCookie("adminRefreshToken", refreshTokenPlain, fastify.cookieOptions)
-      .setCookie("adminDeviceId", deviceId, fastify.cookieOptions);
+      .setCookie("refreshToken", refreshTokenPlain, fastify.cookieOptions)
+      .setCookie("deviceId", deviceId, fastify.cookieOptions);
 
     return { accessToken, admin: { id: payload.id, username: admin.username, phone: admin.phone } };
   });
 
   // ── POST /admin/refresh ───────────────────────────────────────────────
-  fastify.post("/admin/refresh", async (req, reply) => {
-    const { adminRefreshToken, adminDeviceId } = req.cookies || {};
-    if (!adminRefreshToken || !adminDeviceId) {
+  fastify.post("/admin/refresh", refreshSchema, async (req, reply) => {
+    const { refreshToken, deviceId } = req.cookies || {};
+    if (!refreshToken || !deviceId) {
       return reply.code(445).send({ error: "Missing tokens" });
     }
 
     let decoded;
     try {
-      decoded = await fastify.jwt.verify(adminRefreshToken, { key: fastify.REFRESH_SECRET });
+      decoded = await fastify.jwt.verify(refreshToken, { key: fastify.REFRESH_SECRET });
     } catch {
       return reply.code(445).send({ error: "Invalid or expired refresh token" });
     }
@@ -182,10 +228,10 @@ async function authRoutes(fastify) {
       id: decoded.id,
       username: decoded.username,
       phone: decoded.phone,
-      role: "system-admin",
+      role: "admin",
     };
 
-    const presentedHash = fastify.hashToken(adminRefreshToken);
+    const presentedHash = fastify.hashToken(refreshToken);
 
     // Matches either:
     //  (a) the CURRENT refresh token for this session — normal case, or
@@ -196,7 +242,7 @@ async function authRoutes(fastify) {
     //      is rejected even inside the same 30s window.
     const session = await tokensCollection().findOne({
       adminId: toObjectId(payload.id),
-      deviceId: adminDeviceId,
+      deviceId: deviceId,
       expiresAt: { $gt: new Date() },
       $or: [
         { refreshToken: presentedHash },
@@ -229,19 +275,19 @@ async function authRoutes(fastify) {
     );
 
     const newAccessToken = await reply.jwtSign(payload);
-    reply.setCookie("adminRefreshToken", newRefreshTokenPlain, fastify.cookieOptions);
+    reply.setCookie("refreshToken", newRefreshTokenPlain, fastify.cookieOptions);
 
     return { accessToken: newAccessToken };
   });
 
   // ── POST /admin/logout ────────────────────────────────────────────────
-  fastify.post("/admin/logout", async (req, reply) => {
-    const { adminRefreshToken, adminDeviceId } = req.cookies || {};
+  fastify.post("/admin/logout", logoutSchema, async (req, reply) => {
+    const { refreshToken, deviceId } = req.cookies || {};
 
-    if (adminRefreshToken && adminDeviceId) {
+    if (refreshToken && deviceId) {
       let adminId;
       try {
-        const decoded = fastify.jwt.decode(adminRefreshToken);
+        const decoded = fastify.jwt.decode(refreshToken);
         adminId = decoded?.id;
       } catch {
         // still clear cookies below
@@ -249,34 +295,34 @@ async function authRoutes(fastify) {
 
       await tokensCollection().deleteOne({
         ...(adminId && { adminId: toObjectId(adminId) }),
-        deviceId: adminDeviceId,
-        refreshToken: fastify.hashToken(adminRefreshToken),
+        deviceId: deviceId,
+        refreshToken: fastify.hashToken(refreshToken),
       });
     }
 
-    reply.clearCookie("adminRefreshToken", fastify.cookieOptions).clearCookie("adminDeviceId", fastify.cookieOptions);
+    reply.clearCookie("refreshToken", fastify.cookieOptions).clearCookie("deviceId", fastify.cookieOptions);
 
     return { message: "Logged out from this device" };
   });
 
   // ── POST /admin/logout-all ────────────────────────────────────────────
-  fastify.post("/admin/logout-all", { onRequest: [fastify.authenticateAdmin] }, async (req, reply) => {
+  fastify.post("/admin/logout-all", { ...logoutAllSchema, onRequest: [fastify.authenticate] }, async (req, reply) => {
     await tokensCollection().deleteMany({ adminId: toObjectId(req.user.id) });
 
-    reply.clearCookie("adminRefreshToken", fastify.cookieOptions).clearCookie("adminDeviceId", fastify.cookieOptions);
+    reply.clearCookie("refreshToken", fastify.cookieOptions).clearCookie("deviceId", fastify.cookieOptions);
 
     return { message: "Logged out from all devices" };
   });
 
   // ── GET /admin/me ─────────────────────────────────────────────────────
-  fastify.get("/admin/me", { onRequest: [fastify.authenticateAdmin] }, async (req) => {
+  fastify.get("/admin/me", { ...meSchema, onRequest: [fastify.authenticate] }, async (req) => {
     const admin = await adminsCollection().findOne({ _id: toObjectId(req.user.id) }, { projection: { password: 0 } });
     return { admin };
   });
 
   // ── GET /admin/sessions ──────────────────────────────────────────────
-  fastify.get("/admin/sessions", { onRequest: [fastify.authenticateAdmin] }, async (req) => {
-    const currentDeviceId = req.cookies?.adminDeviceId;
+  fastify.get("/admin/sessions", { ...sessionsSchema, onRequest: [fastify.authenticate] }, async (req) => {
+    const currentDeviceId = req.cookies?.deviceId;
 
     const sessions = await tokensCollection()
       .find({ adminId: toObjectId(req.user.id) })
@@ -297,43 +343,34 @@ async function authRoutes(fastify) {
   // ── DELETE /admin/sessions/:deviceId ─────────────────────────────────
   // Revoke a specific device's session. Revoking the CURRENT device is
   // rejected here — use POST /admin/logout for that (it also clears cookies).
-  fastify.delete("/admin/sessions/:deviceId", { onRequest: [fastify.authenticateAdmin] }, async (req, reply) => {
-    const currentDeviceId = req.cookies?.adminDeviceId;
-    const { deviceId } = req.params;
+  fastify.delete(
+    "/admin/sessions/:deviceId",
+    { ...deleteSessionSchema, onRequest: [fastify.authenticate] },
+    async (req, reply) => {
+      const currentDeviceId = req.cookies?.deviceId;
+      const { deviceId } = req.params;
 
-    if (deviceId === currentDeviceId) {
-      return reply.code(400).send({ error: "Use logout to sign out of the current device" });
-    }
+      if (deviceId === currentDeviceId) {
+        return reply.code(400).send({ error: "Use logout to sign out of the current device" });
+      }
 
-    const result = await tokensCollection().deleteOne({
-      adminId: toObjectId(req.user.id),
-      deviceId,
-    });
+      const result = await tokensCollection().deleteOne({
+        adminId: toObjectId(req.user.id),
+        deviceId,
+      });
 
-    if (result.deletedCount === 0) {
-      return reply.code(404).send({ error: "Session not found" });
-    }
+      if (result.deletedCount === 0) {
+        return reply.code(404).send({ error: "Session not found" });
+      }
 
-    return { message: "Session revoked" };
-  });
+      return { message: "Session revoked" };
+    },
+  );
 
   // ── POST /admin/change-password ──────────────────────────────────────
   fastify.post(
     "/admin/change-password",
-    {
-      onRequest: [fastify.authenticateAdmin],
-      schema: {
-        body: {
-          type: "object",
-          required: ["currentPassword", "newPassword"],
-          additionalProperties: false,
-          properties: {
-            currentPassword: { type: "string", minLength: 1, maxLength: 100 },
-            newPassword: { type: "string", minLength: 6, maxLength: 100 },
-          },
-        },
-      },
-    },
+    { ...changePasswordSchema, onRequest: [fastify.authenticate] },
     async (req, reply) => {
       const { currentPassword, newPassword } = req.body;
 
@@ -346,32 +383,6 @@ async function authRoutes(fastify) {
       await adminsCollection().updateOne({ _id: admin._id }, { $set: { password: newHash } });
 
       return { message: "Password changed successfully" };
-    },
-  );
-
-  // ── PATCH /admin/labs/:labId/status ────────────────────────────────────
-  // Activate or deactivate a lab. Body: { isActive: boolean }
-  fastify.patch(
-    "/admin/labs/:labId/status",
-    { onRequest: [fastify.authenticateAdmin], ...labStatusSchema },
-    async (req, reply) => {
-      const { labId } = req.params;
-      const { isActive } = req.body;
-
-      const result = await labsCollection().findOneAndUpdate(
-        { _id: toObjectId(labId) },
-        { $set: { isActive, statusUpdatedAt: new Date(), statusUpdatedBy: req.user.id } },
-        { returnDocument: "after" },
-      );
-
-      if (!result) {
-        return reply.code(404).send({ error: "Lab not found" });
-      }
-
-      return {
-        message: isActive ? "Lab activated" : "Lab deactivated",
-        lab: { _id: result._id, labKey: result.labKey, name: result.name, isActive: result.isActive },
-      };
     },
   );
 }

@@ -17,6 +17,7 @@ import testSchemaRoutes from "./routes/testSchema/testSchema.js";
 import staticDataRoutes from "./routes/staticData/staticData.js";
 import demoReportRoutes from "./routes/demoReport/demoReport.js";
 import billingRoutes from "./routes/billing/billing.js";
+import supportAdminRoutes from "./routes/supportAdmin/supportAdmin.js";
 import { generateMonthlyBills } from "./jobs/generateMonthlyBills.js";
 
 const fastify = Fastify({
@@ -33,7 +34,7 @@ const fastify = Fastify({
 await fastify.register(cors, {
   origin: ["https://lpadmin.netlify.app", "http://localhost:5173"],
   methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
-   credentials: true,
+  credentials: true,
 });
 
 // ── Plugins ───────────────────────────────────────────────────────────────────
@@ -44,6 +45,7 @@ await fastify.register(authPlugin);
 const API = "/v1";
 
 fastify.register(authRoutes, { prefix: API });
+fastify.register(supportAdminRoutes, { prefix: API });
 fastify.register(categoryRoutes, { prefix: API });
 fastify.register(testRoutes, { prefix: API });
 fastify.register(labRoutes, { prefix: API });
