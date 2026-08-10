@@ -32,6 +32,10 @@ const createSupportAdminSchema = {
         labKey: { type: "string", pattern: "^\\d{1,5}$" },
         phone: { type: "string", pattern: "^\\d{6,20}$" },
         password: { type: "string", minLength: 6, maxLength: 100 },
+        // Optional short tag appended to the display name, letters only —
+        // helps tell apart multiple support admins created around the same
+        // time (e.g. "RAK" for a support person's initials).
+        suffix: { type: "string", pattern: "^[A-Za-z]{1,5}$" },
         // Optional — minutes until the account expires. Omit for the 1hr default.
         validityMinutes: {
           type: "integer",
@@ -123,10 +127,11 @@ async function supportAdminRoutes(fastify) {
 
   // ── POST /support-admin ────────────────────────────────────────────────
   fastify.post("/support-admin", createSupportAdminSchema, async (req, reply) => {
-    const { labKey, phone, password, validityMinutes } = req.body;
+    const { labKey, phone, password, validityMinutes, suffix } = req.body;
     const supportPhone = phone || DEFAULT_SUPPORT_PHONE;
     const ttlMinutes = validityMinutes || DEFAULT_SUPPORT_TTL_MINUTES;
     const now = new Date();
+    const supportSuffix = suffix ? suffix.toUpperCase() : undefined;
 
     // Block creation if a still-live support admin exists either for this
     // lab, or on this phone number. The phone check matters even across
@@ -148,11 +153,15 @@ async function supportAdminRoutes(fastify) {
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
+    // Suffix is a secret identifier, not a display label — hashed the same
+    // way as password so it's never recoverable from the stored document.
+    const suffixHash = supportSuffix ? await bcrypt.hash(supportSuffix, 10) : undefined;
     const supportAdminExpiresAt = new Date(now.getTime() + ttlMinutes * 60 * 1000);
 
     const { insertedId } = await adminsCollection().insertOne({
       name: SUPPORT_NAME,
       phone: supportPhone,
+      ...(suffixHash && { suffix: suffixHash }),
       password: passwordHash,
       role: "admin",
       labKey,
@@ -173,7 +182,7 @@ async function supportAdminRoutes(fastify) {
   // ── GET /support-admin ─────────────────────────────────────────────────
   fastify.get("/support-admin", listSupportAdminsSchema, async () => {
     const supportAdmins = await adminsCollection()
-      .find(SUPPORT_ADMIN_FILTER, { projection: { password: 0 } })
+      .find(SUPPORT_ADMIN_FILTER, { projection: { password: 0, suffix: 0 } })
       .sort({ createdAt: -1 })
       .toArray();
 
