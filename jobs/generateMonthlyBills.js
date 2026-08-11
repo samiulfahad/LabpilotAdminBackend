@@ -62,7 +62,23 @@ async function getInvoiceStatsByLab(db, periodStartMs, periodEndMs) {
     ])
     .toArray();
 
-  return new Map(rows.map((r) => [r._id.toString(), { invoiceCount: r.invoiceCount, totalInvoiceFee: r.totalInvoiceFee }]));
+  return new Map(
+    rows.map((r) => [r._id.toString(), { invoiceCount: r.invoiceCount, totalInvoiceFee: r.totalInvoiceFee }]),
+  );
+}
+
+/**
+ * Batched idempotency check: one query for every lab in the period instead
+ * of one findOne per lab.
+ * @returns {Set<string>} labId strings that already have a bill for this period
+ */
+async function getExistingLabIds(db, labIds, periodStartMs) {
+  const rows = await db
+    .collection("billings")
+    .find({ labId: { $in: labIds }, billingPeriodStart: periodStartMs }, { projection: { labId: 1 } })
+    .toArray();
+
+  return new Set(rows.map((r) => r.labId.toString()));
 }
 
 function buildBillingDoc(lab, { periodStartMs, periodEndMs, invoiceCount, totalInvoiceFee, dueDate, nowUtc }) {
@@ -106,6 +122,80 @@ function buildBillingDoc(lab, { periodStartMs, periodEndMs, invoiceCount, totalI
     paidAt: null,
     paidBy: null,
   };
+}
+
+/**
+ * Builds billing docs for a set of labs against precomputed invoice stats,
+ * skipping labs that already have a bill for this period.
+ * Per-lab build errors are caught individually so one bad lab doc doesn't
+ * block the rest — same failure isolation as the old per-lab try/catch.
+ *
+ * @returns {{ docs: object[], skipped: number, failedLabs: object[] }}
+ */
+function buildDocsForLabs(labs, existingLabIds, invoiceStatsByLab, ctx) {
+  const docs = [];
+  const failedLabs = [];
+  let skipped = 0;
+
+  for (const lab of labs) {
+    const labIdStr = lab._id.toString();
+
+    if (existingLabIds.has(labIdStr)) {
+      skipped++;
+      continue;
+    }
+
+    try {
+      const stats = invoiceStatsByLab.get(labIdStr) ?? { invoiceCount: 0, totalInvoiceFee: 0 };
+      const doc = buildBillingDoc(lab, {
+        periodStartMs: ctx.periodStartMs,
+        periodEndMs: ctx.periodEndMs,
+        invoiceCount: stats.invoiceCount,
+        totalInvoiceFee: stats.totalInvoiceFee,
+        dueDate: ctx.dueDate,
+        nowUtc: ctx.nowUtc,
+      });
+      docs.push(doc);
+    } catch (err) {
+      failedLabs.push({
+        labId: lab._id,
+        labName: lab.name ?? "Unknown",
+        error: err.message,
+      });
+    }
+  }
+
+  return { docs, skipped, failedLabs };
+}
+
+/**
+ * Bulk-inserts docs with ordered:false so one bad doc doesn't block the rest.
+ * Parses writeErrors back into the same { labId, labName, error } shape
+ * used elsewhere, so failedLabs reporting stays consistent.
+ *
+ * @returns {{ insertedCount: number, failedLabs: object[] }}
+ */
+async function insertBillingDocs(db, docs) {
+  if (docs.length === 0) return { insertedCount: 0, failedLabs: [] };
+
+  try {
+    const result = await db.collection("billings").insertMany(docs, { ordered: false });
+    return { insertedCount: result.insertedCount, failedLabs: [] };
+  } catch (err) {
+    // BulkWriteError: some docs succeeded, some failed — err.writeErrors has the failures.
+    const writeErrors = err.writeErrors ?? [];
+    const failedIndexes = new Set(writeErrors.map((e) => e.index));
+    const failedLabs = writeErrors.map((e) => {
+      const doc = docs[e.index];
+      return {
+        labId: doc.labId,
+        labName: doc.labKey ?? "Unknown",
+        error: e.errmsg ?? e.message ?? "Insert failed",
+      };
+    });
+    const insertedCount = docs.length - failedIndexes.size;
+    return { insertedCount, failedLabs };
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -159,46 +249,32 @@ export async function generateMonthlyBills(db, options = {}) {
     )
     .toArray();
 
-  // ── One batched aggregation for every lab's invoice fees this period ───────
-  const invoiceStatsByLab = await getInvoiceStatsByLab(db, periodStartMs, periodEndMs);
+  const labIds = labs.map((l) => l._id);
 
-  let generated = 0;
-  let free = 0;
-  let skipped = 0;
-  const failedLabs = [];
+  // ── Batched: invoice stats + existing-bill check, one query each ──────────
+  const [invoiceStatsByLab, existingLabIds] = await Promise.all([
+    getInvoiceStatsByLab(db, periodStartMs, periodEndMs),
+    getExistingLabIds(db, labIds, periodStartMs),
+  ]);
 
-  for (const lab of labs) {
-    try {
-      // Idempotency: skip if a bill for this period already exists
-      const exists = await db
-        .collection("billings")
-        .findOne({ labId: lab._id, billingPeriodStart: periodStartMs }, { projection: { _id: 1 } });
-      if (exists) {
-        skipped++;
-        continue;
-      }
+  // ── Build docs in memory (per-lab errors isolated here) ────────────────────
+  const {
+    docs,
+    skipped,
+    failedLabs: buildFailures,
+  } = buildDocsForLabs(labs, existingLabIds, invoiceStatsByLab, {
+    periodStartMs,
+    periodEndMs,
+    dueDate,
+    nowUtc,
+  });
 
-      const stats = invoiceStatsByLab.get(lab._id.toString()) ?? { invoiceCount: 0, totalInvoiceFee: 0 };
+  // ── Single bulk insert (ordered:false keeps one bad doc from blocking rest) ─
+  const { insertedCount, failedLabs: insertFailures } = await insertBillingDocs(db, docs);
 
-      const doc = buildBillingDoc(lab, {
-        periodStartMs,
-        periodEndMs,
-        invoiceCount: stats.invoiceCount,
-        totalInvoiceFee: stats.totalInvoiceFee,
-        dueDate,
-        nowUtc,
-      });
-
-      await db.collection("billings").insertOne(doc);
-      doc.status === "free" ? free++ : generated++;
-    } catch (err) {
-      failedLabs.push({
-        labId: lab._id,
-        labName: lab.name ?? "Unknown",
-        error: err.message,
-      });
-    }
-  }
+  const failedLabs = [...buildFailures, ...insertFailures];
+  const generated = docs.filter((d) => d.status === "unpaid").length - insertFailures.length;
+  const free = docs.filter((d) => d.status === "free").length;
 
   // ── Write run log ─────────────────────────────────────────────────────────
   const runDoc = {
@@ -241,51 +317,57 @@ export async function retryFailedLabs(db, run) {
   const periodEndMs = endOfMonthBSTFromStartMs(periodStartMs);
   const dueDate = endOfDayBST(nowUtc + DUE_DAYS * 24 * 60 * 60 * 1000);
 
-  // Batched, same as the main run — covers all still-failing labs in one query.
-  const invoiceStatsByLab = await getInvoiceStatsByLab(db, periodStartMs, periodEndMs);
+  const failedLabIds = run.failedLabs.map((f) => f.labId);
 
+  // Batched, same as the main run — covers all still-failing labs in one query each.
+  const [invoiceStatsByLab, existingLabIds, labs] = await Promise.all([
+    getInvoiceStatsByLab(db, periodStartMs, periodEndMs),
+    getExistingLabIds(db, failedLabIds, periodStartMs),
+    db
+      .collection("labs")
+      .find(
+        { _id: { $in: failedLabIds }, isActive: true, "deletion.status": { $ne: true } },
+        { projection: { _id: 1, name: 1, labKey: 1, billing: 1 } },
+      )
+      .toArray(),
+  ]);
+
+  const foundLabIds = new Set(labs.map((l) => l._id.toString()));
   const retried = [];
   const stillFailing = [];
 
+  // Labs that no longer exist / are inactive — can't be retried.
   for (const failed of run.failedLabs) {
-    try {
-      const exists = await db
-        .collection("billings")
-        .findOne({ labId: failed.labId, billingPeriodStart: periodStartMs }, { projection: { _id: 1 } });
-      if (exists) {
-        retried.push({ labId: failed.labId, result: "already existed" });
-        continue;
-      }
-
-      const lab = await db
-        .collection("labs")
-        .findOne(
-          { _id: failed.labId, isActive: true, "deletion.status": { $ne: true } },
-          { projection: { _id: 1, name: 1, labKey: 1, billing: 1 } },
-        );
-
-      if (!lab) {
-        stillFailing.push({ labId: failed.labId, labName: failed.labName, error: "Lab not found or inactive" });
-        continue;
-      }
-
-      const stats = invoiceStatsByLab.get(lab._id.toString()) ?? { invoiceCount: 0, totalInvoiceFee: 0 };
-
-      const doc = buildBillingDoc(lab, {
-        periodStartMs,
-        periodEndMs,
-        invoiceCount: stats.invoiceCount,
-        totalInvoiceFee: stats.totalInvoiceFee,
-        dueDate,
-        nowUtc,
-      });
-      await db.collection("billings").insertOne(doc);
-
-      retried.push({ labId: lab._id, labName: lab.name, result: "success" });
-    } catch (err) {
-      stillFailing.push({ labId: failed.labId, labName: failed.labName, error: err.message });
+    const idStr = failed.labId.toString();
+    if (existingLabIds.has(idStr)) {
+      retried.push({ labId: failed.labId, result: "already existed" });
+    } else if (!foundLabIds.has(idStr)) {
+      stillFailing.push({ labId: failed.labId, labName: failed.labName, error: "Lab not found or inactive" });
     }
   }
+
+  // Only build/insert for labs that are eligible (found, not already existing).
+  const eligibleLabs = labs.filter((l) => !existingLabIds.has(l._id.toString()));
+
+  const { docs, failedLabs: buildFailures } = buildDocsForLabs(eligibleLabs, existingLabIds, invoiceStatsByLab, {
+    periodStartMs,
+    periodEndMs,
+    dueDate,
+    nowUtc,
+  });
+
+  const { failedLabs: insertFailures } = await insertBillingDocs(db, docs);
+  const insertFailedIds = new Set(insertFailures.map((f) => f.labId.toString()));
+
+  for (const doc of docs) {
+    const idStr = doc.labId.toString();
+    if (!insertFailedIds.has(idStr)) {
+      const lab = eligibleLabs.find((l) => l._id.toString() === idStr);
+      retried.push({ labId: doc.labId, labName: lab?.name, result: "success" });
+    }
+  }
+
+  stillFailing.push(...buildFailures, ...insertFailures);
 
   await db.collection("billingRuns").updateOne(
     { _id: run._id },
