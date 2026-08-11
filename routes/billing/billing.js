@@ -544,9 +544,7 @@ async function billingRoutes(fastify) {
           }
         }
 
-        generateMonthlyBills(fastify.mongo.db, options)
-          .then((r) => fastify.log.info({ r }, "[billing] Manual generation complete"))
-          .catch((err) => fastify.log.error({ err }, "[billing] Manual generation failed"));
+        generateMonthlyBills(fastify.mongo.db, options).catch(() => {});
 
         return reply.send({
           message: "Bill generation started",
@@ -589,9 +587,7 @@ async function billingRoutes(fastify) {
         if (!run) return reply.code(404).send({ error: "Run not found" });
         if (!run.failedLabs?.length) return reply.send({ message: "No failed labs in this run" });
 
-        retryFailedLabs(fastify.mongo.db, run)
-          .then((r) => fastify.log.info({ r }, "[billing] Retry complete"))
-          .catch((err) => fastify.log.error({ err }, "[billing] Retry failed"));
+        retryFailedLabs(fastify.mongo.db, run).catch(() => {});
 
         return reply.send({ message: `Retrying ${run.failedLabs.length} failed lab(s) from ${run.period}` });
       } catch (err) {
@@ -710,7 +706,6 @@ async function billingRoutes(fastify) {
 
         await col().deleteMany({ billingPeriodStart: periodStart });
 
-        fastify.log.info({ periodStart, count }, "[billing] Period bills deleted");
         return reply.send({ success: true, deleted: count });
       } catch (err) {
         req.log.error(err);
