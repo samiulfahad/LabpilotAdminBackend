@@ -64,15 +64,21 @@ export function endOfMonthBST(year, month) {
  * Parses a "YYYY-MM-DD" string as a BST date and returns end-of-day UTC ms.
  * Safe to call with user-supplied strings from the admin UI.
  *
- * Throws if the string is not a valid date.
+ * Throws if the string is not a valid date (including non-existent
+ * calendar dates like "2026-02-30", which used to silently roll over
+ * to March instead of throwing).
  */
 export function parseDateStringToBSTEndOfDay(dateStr) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
   if (!match) throw new Error(`Invalid date string: "${dateStr}". Expected YYYY-MM-DD.`);
 
   const [, y, mo, d] = match.map(Number);
-  const utcMs = Date.UTC(y, mo - 1, d, 23, 59, 59, 999) - BST_OFFSET_MS;
 
-  if (isNaN(utcMs)) throw new Error(`Invalid date: "${dateStr}".`);
-  return utcMs;
+  // Verify the date actually exists (catches Feb 30, month 13, day 0, etc.)
+  const check = new Date(Date.UTC(y, mo - 1, d));
+  if (check.getUTCFullYear() !== y || check.getUTCMonth() !== mo - 1 || check.getUTCDate() !== d) {
+    throw new Error(`Invalid date: "${dateStr}".`);
+  }
+
+  return Date.UTC(y, mo - 1, d, 23, 59, 59, 999) - BST_OFFSET_MS;
 }

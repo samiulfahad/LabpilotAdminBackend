@@ -6,6 +6,18 @@
 //  - dueDate is always 23:59:59.999 BST of the Nth day after generation.
 //  - Idempotent: re-running for the same period skips existing bills.
 //  - December→January: handled automatically by month arithmetic.
+//
+//  Bill amount = monthlyFee + netInvoiceFee, where:
+//    - lab.billing.forceInvoiceFee === true:
+//        netInvoiceFee = (feePerInvoice - commission) * invoiceCount
+//        (every invoice is charged the same flat fee, so no need to read
+//         each invoice's own amount.invoiceFee)
+//    - lab.billing.forceInvoiceFee === false:
+//        netInvoiceFee = SUM(invoice.amount.invoiceFee) - commission * invoiceCount
+//        (invoices may carry their own overridden fee, so sum what's
+//         actually stored on them, then deduct commission per invoice)
+//    netInvoiceFee is floored at 0 — a lab's invoice fees never discount
+//    the monthly fee, they only ever add to it.
 
 import { nowBST, endOfDayBST, startOfMonthBST, endOfMonthBST } from "../utils/time.js";
 
@@ -23,12 +35,50 @@ function getPreviousMonth(bstNow) {
   return { year, month };
 }
 
-function buildBillingDoc(lab, { periodStartMs, periodEndMs, invoiceCount, dueDate, nowUtc }) {
+/**
+ * One aggregation covering every lab's invoices for the period at once —
+ * avoids an N+1 query per lab. Computes both invoiceCount and the raw
+ * invoiceFee sum; the sum is cheap to include even for forceInvoiceFee
+ * labs that end up not using it.
+ * @returns {Map<string, { invoiceCount: number, totalInvoiceFee: number }>}
+ */
+async function getInvoiceStatsByLab(db, periodStartMs, periodEndMs) {
+  const rows = await db
+    .collection("invoices")
+    .aggregate([
+      {
+        $match: {
+          createdAt: { $gte: periodStartMs, $lte: periodEndMs },
+          "deletion.status": { $ne: true },
+        },
+      },
+      {
+        $group: {
+          _id: "$labId",
+          invoiceCount: { $sum: 1 },
+          totalInvoiceFee: { $sum: { $ifNull: ["$amount.invoiceFee", 0] } },
+        },
+      },
+    ])
+    .toArray();
+
+  return new Map(rows.map((r) => [r._id.toString(), { invoiceCount: r.invoiceCount, totalInvoiceFee: r.totalInvoiceFee }]));
+}
+
+function buildBillingDoc(lab, { periodStartMs, periodEndMs, invoiceCount, totalInvoiceFee, dueDate, nowUtc }) {
   const monthlyFee = lab.billing?.monthlyFee ?? 0;
-  const perInvoiceFee = lab.billing?.perInvoiceFee ?? 0;
   const commission = lab.billing?.commission ?? 0;
-  const perInvoiceNet = perInvoiceFee - commission;
-  const totalAmount = monthlyFee + perInvoiceNet * invoiceCount;
+  const forceInvoiceFee = lab.billing?.forceInvoiceFee === true;
+  const feePerInvoice = lab.billing?.feePerInvoice ?? 0;
+
+  const rawNetInvoiceFee = forceInvoiceFee
+    ? (feePerInvoice - commission) * invoiceCount
+    : totalInvoiceFee - commission * invoiceCount;
+
+  // Invoice fees only ever add to the bill — never let them discount monthlyFee.
+  const netInvoiceFee = Math.max(0, rawNetInvoiceFee);
+
+  const totalAmount = monthlyFee + netInvoiceFee;
   const isFree = totalAmount <= 0;
 
   return {
@@ -40,9 +90,12 @@ function buildBillingDoc(lab, { periodStartMs, periodEndMs, invoiceCount, dueDat
     invoiceCount,
     breakdown: {
       monthlyFee,
-      perInvoiceFee,
+      forceInvoiceFee,
+      feePerInvoice,
       commission,
-      perInvoiceNet,
+      // Raw invoice-fee sum as stored on invoices — meaningful mainly when forceInvoiceFee is false.
+      totalInvoiceFee,
+      netInvoiceFee,
     },
     totalAmount: isFree ? 0 : totalAmount,
     status: isFree ? "free" : "unpaid",
@@ -106,6 +159,9 @@ export async function generateMonthlyBills(db, options = {}) {
     )
     .toArray();
 
+  // ── One batched aggregation for every lab's invoice fees this period ───────
+  const invoiceStatsByLab = await getInvoiceStatsByLab(db, periodStartMs, periodEndMs);
+
   let generated = 0;
   let free = 0;
   let skipped = 0;
@@ -122,17 +178,13 @@ export async function generateMonthlyBills(db, options = {}) {
         continue;
       }
 
-      // Count non-deleted invoices created within the BST period
-      const invoiceCount = await db.collection("invoices").countDocuments({
-        labId: lab._id,
-        "deletion.status": { $ne: true },
-        createdAt: { $gte: periodStartMs, $lte: periodEndMs },
-      });
+      const stats = invoiceStatsByLab.get(lab._id.toString()) ?? { invoiceCount: 0, totalInvoiceFee: 0 };
 
       const doc = buildBillingDoc(lab, {
         periodStartMs,
         periodEndMs,
-        invoiceCount,
+        invoiceCount: stats.invoiceCount,
+        totalInvoiceFee: stats.totalInvoiceFee,
         dueDate,
         nowUtc,
       });
@@ -189,6 +241,9 @@ export async function retryFailedLabs(db, run) {
   const periodEndMs = endOfMonthBSTFromStartMs(periodStartMs);
   const dueDate = endOfDayBST(nowUtc + DUE_DAYS * 24 * 60 * 60 * 1000);
 
+  // Batched, same as the main run — covers all still-failing labs in one query.
+  const invoiceStatsByLab = await getInvoiceStatsByLab(db, periodStartMs, periodEndMs);
+
   const retried = [];
   const stillFailing = [];
 
@@ -214,13 +269,16 @@ export async function retryFailedLabs(db, run) {
         continue;
       }
 
-      const invoiceCount = await db.collection("invoices").countDocuments({
-        labId: lab._id,
-        "deletion.status": { $ne: true },
-        createdAt: { $gte: periodStartMs, $lte: periodEndMs },
-      });
+      const stats = invoiceStatsByLab.get(lab._id.toString()) ?? { invoiceCount: 0, totalInvoiceFee: 0 };
 
-      const doc = buildBillingDoc(lab, { periodStartMs, periodEndMs, invoiceCount, dueDate, nowUtc });
+      const doc = buildBillingDoc(lab, {
+        periodStartMs,
+        periodEndMs,
+        invoiceCount: stats.invoiceCount,
+        totalInvoiceFee: stats.totalInvoiceFee,
+        dueDate,
+        nowUtc,
+      });
       await db.collection("billings").insertOne(doc);
 
       retried.push({ labId: lab._id, labName: lab.name, result: "success" });

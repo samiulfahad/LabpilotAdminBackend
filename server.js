@@ -32,7 +32,7 @@ const fastify = Fastify({
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
 await fastify.register(cors, {
-  origin: ["https://lpadmin.netlify.app", "http://localhost:5173"],
+  origin: ["https://lpadmin.netlify.app", "http://localhost:5173", "http://localhost:5174"],
   methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
   credentials: true,
 });
