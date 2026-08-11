@@ -413,25 +413,11 @@ async function billingRoutes(fastify) {
         }
 
         // Fire-and-forget cache invalidation on the hospital backend.
-        // Not awaited — same reasoning as the due-date route: worst case is
-        // a 5-min-stale billing status, not incorrect billing. Logged so
-        // failures are visible instead of silent.
+        // Not awaited — worst case is a 5-min-stale billing status.
         fetch(`${process.env.LAB_API_INTERNAL_URL}/internal/billing/cache-invalidate/${req.body.labId}`, {
           method: "POST",
           headers: { "x-internal-secret": process.env.INTERNAL_SECRET },
-        })
-          .then(async (res) => {
-            if (!res.ok) {
-              const body = await res.text().catch(() => "");
-              req.log.warn(
-                { status: res.status, body, labId: req.body.labId },
-                "[billing] Cache invalidation returned non-OK",
-              );
-            } else {
-              req.log.info({ labId: req.body.labId }, "[billing] Cache invalidated");
-            }
-          })
-          .catch((err) => req.log.warn({ err }, "[billing] Could not invalidate billing cache"));
+        }).catch(() => {});
 
         return reply.send({ success: true });
       } catch (err) {
@@ -494,25 +480,11 @@ async function billingRoutes(fastify) {
         await col().updateOne({ _id: oid }, { $set: { dueDate: newDueDateMs } });
 
         // Fire-and-forget cache invalidation on the hospital backend.
-        // Not awaited — worst case is a 5-min-stale due date if this fails,
-        // not incorrect billing. But we DO log the outcome so failures are
-        // visible instead of silent.
+        // Not awaited — worst case is a 5-min-stale due date.
         fetch(`${process.env.LAB_API_INTERNAL_URL}/internal/billing/cache-invalidate/${bill.labId}`, {
           method: "POST",
           headers: { "x-internal-secret": process.env.INTERNAL_SECRET },
-        })
-          .then(async (res) => {
-            if (!res.ok) {
-              const body = await res.text().catch(() => "");
-              req.log.warn(
-                { status: res.status, body, labId: bill.labId.toString() },
-                "[billing] Cache invalidation returned non-OK",
-              );
-            } else {
-              req.log.info({ labId: bill.labId.toString() }, "[billing] Cache invalidated");
-            }
-          })
-          .catch((err) => req.log.warn({ err }, "[billing] Could not invalidate billing cache"));
+        }).catch(() => {});
 
         return reply.send({ success: true, dueDate: newDueDateMs, dueDateBST: req.body.dueDate });
       } catch (err) {
