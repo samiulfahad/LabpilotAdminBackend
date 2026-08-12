@@ -1,16 +1,9 @@
 // labRoutes.js
-import crypto from "node:crypto";
 import toObjectId from "../../utils/db.js";
-
-// ─── JSON Schemas ──────────────────────────────────────────────────────────
 
 const OID = { type: "string", minLength: 24, maxLength: 24, pattern: "^[a-fA-F0-9]{24}$" };
 
-const idParam = {
-  type: "object",
-  additionalProperties: false,
-  properties: { id: OID },
-};
+const idParam = { type: "object", additionalProperties: false, properties: { id: OID } };
 
 const paginationQuery = {
   type: "object",
@@ -64,9 +57,7 @@ const limitSchema = {
 
 const medicalReportSchema = {
   type: "object",
-  properties: {
-    padHeight: { type: "number", minimum: 0 },
-  },
+  properties: { padHeight: { type: "number", minimum: 0 } },
   additionalProperties: false,
 };
 
@@ -125,8 +116,6 @@ const updateMedicalReportBody = {
   additionalProperties: false,
 };
 
-// ─── Route Schemas ─────────────────────────────────────────────────────────
-
 const listLabsSchema = {
   tags: ["Lab"],
   summary: "List labs (paginated, search by labKey)",
@@ -135,96 +124,19 @@ const listLabsSchema = {
 const statsLabSchema = { tags: ["Lab"], summary: "Get lab stats (total, active, inactive, revenue)" };
 const getLabSchema = { tags: ["Lab"], summary: "Get a lab by ID", params: idParam };
 const createLabSchema = { tags: ["Lab"], summary: "Create a new lab", body: createLabBody };
-const updateDetailsSchema = {
-  tags: ["Lab"],
-  summary: "Update Lab Details — name, type, registrationNumber",
-  params: idParam,
-  body: updateDetailsBody,
-};
+const updateDetailsSchema = { tags: ["Lab"], summary: "Update Lab Details", params: idParam, body: updateDetailsBody };
 const updateContactSchema = { tags: ["Lab"], summary: "Update lab contact", params: idParam, body: updateContactBody };
-const updateBillingSchema = {
-  tags: ["Lab"],
-  summary: "Update lab billing — feePerInvoice, forceInvoiceFee, monthlyFee, commission",
-  params: idParam,
-  body: updateBillingBody,
-};
-const updateLimitSchema = {
-  tags: ["Lab"],
-  summary:
-    "Update Lab Limits — maxStaff, maxProduct, maxService, maxMedicine, maxReferrer, maxDoctor, maxAdmissionSpace",
-  params: idParam,
-  body: updateLimitBody,
-};
+const updateBillingSchema = { tags: ["Lab"], summary: "Update lab billing", params: idParam, body: updateBillingBody };
+const updateLimitSchema = { tags: ["Lab"], summary: "Update Lab Limits", params: idParam, body: updateLimitBody };
 const updateMedicalReportSchema = {
   tags: ["Lab"],
-  summary: "Update Lab Medical Report — padHeight",
+  summary: "Update Lab Medical Report",
   params: idParam,
   body: updateMedicalReportBody,
 };
 const activateLabSchema = { tags: ["Lab"], summary: "Activate a lab", params: idParam };
 const deactivateLabSchema = { tags: ["Lab"], summary: "Deactivate a lab", params: idParam };
 const deleteLabSchema = { tags: ["Lab"], summary: "Delete a lab", params: idParam };
-
-// Staff (view-only) schemas
-const labIdParam = { type: "object", additionalProperties: false, properties: { labId: OID } };
-const labStaffParam = { type: "object", additionalProperties: false, properties: { labId: OID, id: OID } };
-
-const listStaffSchema = {
-  tags: ["Staff"],
-  summary: "List all staff & admins of a lab (view only)",
-  params: labIdParam,
-};
-const getStaffByIdSchema = {
-  tags: ["Staff"],
-  summary: "Get a staff member by ID (view only)",
-  params: labStaffParam,
-};
-
-// Admin schemas
-const permissionsSchema = {
-  type: "object",
-  properties: {
-    createInvoice: { type: "boolean", default: false },
-    deleteInvoice: { type: "boolean", default: false },
-    addExpense: { type: "boolean", default: false },
-    deleteExpense: { type: "boolean", default: false },
-    cashmemo: { type: "boolean", default: false },
-    salesReport: { type: "boolean", default: false },
-    expenseReport: { type: "boolean", default: false },
-    commissionReport: { type: "boolean", default: false },
-    collectionReport: { type: "boolean", default: false },
-    testReportDownload: { type: "boolean", default: false },
-    testReportUpload: { type: "boolean", default: false },
-    manageProducts: { type: "boolean", default: false },
-    manageReferrers: { type: "boolean", default: false },
-    manageDoctors: { type: "boolean", default: false },
-    manageTest: { type: "boolean", default: false },
-    admitPatient: { type: "boolean", default: false },
-    deletePatient: { type: "boolean", default: false },
-    releasePatient: { type: "boolean", default: false },
-  },
-  additionalProperties: false,
-};
-
-const createAdminBody = {
-  type: "object",
-  required: ["name", "phone"],
-  properties: {
-    name: { type: "string", minLength: 1 },
-    phone: { type: "string", pattern: "^(?:\\+?880|0)1[3-9][0-9]{8}$" },
-    permissions: permissionsSchema,
-  },
-  additionalProperties: false,
-};
-
-const createAdminSchema = {
-  tags: ["Staff"],
-  summary: "Add an admin user to a lab — sends a password-set link via SMS",
-  params: labIdParam,
-  body: createAdminBody,
-};
-
-// ─── Helpers ──────────────────────────────────────────────────────────────
 
 function normalizeContact(contact) {
   if (!contact) return contact;
@@ -237,32 +149,12 @@ function normalizeContact(contact) {
   return c;
 }
 
-const resolveLab = async (rawLabId, reply, col) => {
-  const oid = toObjectId(rawLabId);
-  if (!oid) {
-    reply.code(400).send({ message: "Invalid lab ID format" });
-    return null;
-  }
-  const lab = await col.findOne({ _id: oid }, { projection: { _id: 1, labKey: 1 } });
-  if (!lab) {
-    reply.code(404).send({ message: "Lab not found" });
-    return null;
-  }
-  return { _id: oid, labKey: Number(lab.labKey) };
-};
-
-// ─── Main Plugin ────────────────────────────────────────────────────────────
-
 export default async function labRoutes(fastify) {
   const labs = () => fastify.mongo.db.collection("labs");
-  const staffs = () => fastify.mongo.db.collection("staffs");
   const tokens = () => fastify.mongo.db.collection("tokens");
-  const passwordSetTokens = () => fastify.mongo.db.collection("passwordSetTokens");
 
-  // Force re-login on all devices for a lab by wiping its refresh tokens
   const revokeLabTokens = (labId) => tokens().deleteMany({ labId });
 
-  // GET /labs/stats
   fastify.get("/labs/stats", { schema: statsLabSchema }, async () => {
     const [result] = await labs()
       .aggregate([
@@ -290,7 +182,6 @@ export default async function labRoutes(fastify) {
       : { total: 0, active: 0, inactive: 0, totalMonthly: 0, totalInvoice: 0 };
   });
 
-  // GET /labs/all
   fastify.get("/labs/all", { schema: listLabsSchema }, async (request, reply) => {
     const page = request.query.page ?? 1;
     const limit = request.query.limit ?? 10;
@@ -313,7 +204,6 @@ export default async function labRoutes(fastify) {
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   });
 
-  // GET /labs/:id
   fastify.get("/labs/:id", { schema: getLabSchema }, async (request, reply) => {
     const oid = toObjectId(request.params.id);
     if (!oid) return reply.code(400).send({ message: "Invalid ID format" });
@@ -322,7 +212,6 @@ export default async function labRoutes(fastify) {
     return lab;
   });
 
-  // POST /labs
   fastify.post("/labs", { schema: createLabSchema }, async (request, reply) => {
     const { name, labKey, type, registrationNumber, billing, isActive = true } = request.body;
 
@@ -353,10 +242,7 @@ export default async function labRoutes(fastify) {
         maxAdmissionSpace: 0,
         ...request.body.limit,
       },
-      medicalReport: {
-        padHeight: 0,
-        ...request.body.medicalReport,
-      },
+      medicalReport: { padHeight: 0, ...request.body.medicalReport },
       isActive,
       createdAt: new Date(),
     };
@@ -366,7 +252,6 @@ export default async function labRoutes(fastify) {
     return reply.code(201).send(created);
   });
 
-  // PATCH /labs/:id/details
   fastify.patch("/labs/:id/details", { schema: updateDetailsSchema }, async (request, reply) => {
     const oid = toObjectId(request.params.id);
     if (!oid) return reply.code(400).send({ message: "Invalid ID format" });
@@ -374,9 +259,7 @@ export default async function labRoutes(fastify) {
     const $set = {};
     if (request.body.name) $set.name = request.body.name;
     if ("type" in request.body) $set.type = request.body.type || null;
-    if ("registrationNumber" in request.body) {
-      $set.registrationNumber = request.body.registrationNumber || null;
-    }
+    if ("registrationNumber" in request.body) $set.registrationNumber = request.body.registrationNumber || null;
 
     if (!Object.keys($set).length) return reply.code(400).send({ message: "Nothing to update" });
 
@@ -386,7 +269,6 @@ export default async function labRoutes(fastify) {
     return result;
   });
 
-  // PATCH /labs/:id/contact
   fastify.patch("/labs/:id/contact", { schema: updateContactSchema }, async (request, reply) => {
     const oid = toObjectId(request.params.id);
     if (!oid) return reply.code(400).send({ message: "Invalid ID format" });
@@ -404,7 +286,6 @@ export default async function labRoutes(fastify) {
     return result;
   });
 
-  // PATCH /labs/:id/billing
   fastify.patch("/labs/:id/billing", { schema: updateBillingSchema }, async (request, reply) => {
     const oid = toObjectId(request.params.id);
     if (!oid) return reply.code(400).send({ message: "Invalid ID format" });
@@ -418,7 +299,6 @@ export default async function labRoutes(fastify) {
     return result;
   });
 
-  // PATCH /labs/:id/limit
   fastify.patch("/labs/:id/limit", { schema: updateLimitSchema }, async (request, reply) => {
     const oid = toObjectId(request.params.id);
     if (!oid) return reply.code(400).send({ message: "Invalid ID format" });
@@ -432,7 +312,6 @@ export default async function labRoutes(fastify) {
     return result;
   });
 
-  // PATCH /labs/:id/medical-report
   fastify.patch("/labs/:id/medical-report", { schema: updateMedicalReportSchema }, async (request, reply) => {
     const oid = toObjectId(request.params.id);
     if (!oid) return reply.code(400).send({ message: "Invalid ID format" });
@@ -446,7 +325,6 @@ export default async function labRoutes(fastify) {
     return result;
   });
 
-  // PATCH /labs/:id/activate
   fastify.patch("/labs/:id/activate", { schema: activateLabSchema }, async (request, reply) => {
     const oid = toObjectId(request.params.id);
     if (!oid) return reply.code(400).send({ message: "Invalid ID format" });
@@ -460,7 +338,6 @@ export default async function labRoutes(fastify) {
     return result;
   });
 
-  // PATCH /labs/:id/deactivate
   fastify.patch("/labs/:id/deactivate", { schema: deactivateLabSchema }, async (request, reply) => {
     const oid = toObjectId(request.params.id);
     if (!oid) return reply.code(400).send({ message: "Invalid ID format" });
@@ -474,7 +351,6 @@ export default async function labRoutes(fastify) {
     return result;
   });
 
-  // DELETE /labs/:id
   fastify.delete("/labs/:id", { schema: deleteLabSchema }, async (request, reply) => {
     const oid = toObjectId(request.params.id);
     if (!oid) return reply.code(400).send({ message: "Invalid ID format" });
@@ -482,127 +358,5 @@ export default async function labRoutes(fastify) {
     if (result.deletedCount === 0) return reply.code(404).send({ message: "Lab not found" });
     await revokeLabTokens(oid);
     return { message: "Lab deleted successfully" };
-  });
-
-  // =========================================================================
-  //  STAFF ENDPOINTS (view only)
-  // =========================================================================
-
-  // GET /labs/:labId/staff
-  fastify.get("/labs/:labId/staff", { schema: listStaffSchema }, async (req, reply) => {
-    const lab = await resolveLab(req.params.labId, reply, labs());
-    if (!lab) return;
-    return staffs()
-      .find({ labId: lab._id, "deletion.status": { $ne: true } })
-      .sort({ role: 1, name: 1 })
-      .toArray();
-  });
-
-  // GET /labs/:labId/staff/:id
-  fastify.get("/labs/:labId/staff/:id", { schema: getStaffByIdSchema }, async (req, reply) => {
-    const lab = await resolveLab(req.params.labId, reply, labs());
-    if (!lab) return;
-
-    const staffId = toObjectId(req.params.id);
-    if (!staffId) return reply.code(400).send({ message: "Invalid staff ID format" });
-
-    const member = await staffs().findOne({ _id: staffId, labId: lab._id, "deletion.status": { $ne: true } });
-    if (!member) return reply.code(404).send({ message: "Staff member not found" });
-    return member;
-  });
-
-  // =========================================================================
-  //  ADMIN ENDPOINTS
-  // =========================================================================
-
-  // POST /labs/:labId/admins
-  fastify.post("/labs/:labId/admins", { schema: createAdminSchema }, async (req, reply) => {
-    const lab = await resolveLab(req.params.labId, reply, labs());
-    if (!lab) return;
-
-    // Normalize to local 0XXXXXXXXXX form so lookups/storage stay consistent
-    const phone = req.body.phone.replace(/^(\+?880|0)/, "0");
-
-    // Scoped by labId (tenant) — the same phone can be an admin/staff in other labs
-    const existing = await staffs().findOne({
-      labId: lab._id,
-      phone,
-      "deletion.status": { $ne: true },
-    });
-    if (existing) {
-      return reply.code(409).send({ message: "A staff member with this phone already exists in this lab" });
-    }
-
-    const permissions = {
-      createInvoice: false,
-      deleteInvoice: false,
-      addExpense: false,
-      deleteExpense: false,
-      cashmemo: false,
-      salesReport: false,
-      expenseReport: false,
-      commissionReport: false,
-      collectionReport: false,
-      testReportDownload: false,
-      testReportUpload: false,
-      manageProducts: false,
-      manageReferrers: false,
-      manageDoctors: false,
-      manageTest: false,
-      admitPatient: false,
-      deletePatient: false,
-      releasePatient: false,
-      ...req.body.permissions,
-    };
-
-    const now = new Date();
-    const actor = { id: req.user?.id ?? null, name: req.user?.name ?? "SYSTEM ADMIN" };
-
-    const doc = {
-      labId: lab._id,
-      labKey: String(lab.labKey),
-      name: req.body.name,
-      phone,
-      password: null, // set once the SMS link is used
-      role: "admin",
-      permissions,
-      isActive: true,
-      deletion: { status: false, at: null, by: null },
-      created: { at: Date.now(), by: actor },
-      updatedAt: now,
-      updated: { at: Date.now(), by: actor },
-    };
-
-    const { insertedId } = await staffs().insertOne(doc);
-
-    // One-time password-set token — only the hash is stored, the raw value goes out over SMS
-    const rawToken = crypto.randomBytes(32).toString("hex");
-    const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
-
-    await passwordSetTokens().insertOne({
-      staffId: insertedId,
-      labId: lab._id,
-      tokenHash,
-      used: false,
-      createdAt: now,
-      expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000), // 24h
-    });
-
-    const setPasswordUrl = `${process.env.CLIENT_URL}/set-password?token=${rawToken}&labKey=${lab.labKey}`;
-
-    try {
-      await fastify.sendSMS({
-        number: phone,
-        message: `Welcome to ${doc.name}'s lab account. Set your password: ${setPasswordUrl} (expires in 24 hours)`,
-      });
-    } catch (err) {
-      // Admin record still exists — surface the SMS failure so it can be resent rather than losing the account silently
-      fastify.log.error({ err, staffId: insertedId }, "Failed to send admin password-set SMS");
-      const created = await staffs().findOne({ _id: insertedId });
-      return reply.code(201).send({ ...created, smsSent: false });
-    }
-
-    const created = await staffs().findOne({ _id: insertedId });
-    return reply.code(201).send({ ...created, smsSent: true });
   });
 }
