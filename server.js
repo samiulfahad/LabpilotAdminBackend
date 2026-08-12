@@ -8,6 +8,8 @@ import cron from "node-cron";
 
 import mongoPlugin from "./plugins/mongo.js";
 import authPlugin from "./plugins/auth.js";
+import smsPlugin from "./plugins/sms.js";
+
 import authRoutes from "./routes/auth/auth.js";
 import categoryRoutes from "./routes/category/category.js";
 import testRoutes from "./routes/test/test.js";
@@ -40,6 +42,7 @@ await fastify.register(cors, {
 // ── Plugins ───────────────────────────────────────────────────────────────────
 await fastify.register(mongoPlugin);
 await fastify.register(authPlugin);
+await fastify.register(smsPlugin);
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 const API = "/v1";
