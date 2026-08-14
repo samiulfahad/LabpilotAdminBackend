@@ -33,6 +33,13 @@ export default async function schemaRoutes(fastify) {
   // POST /test-schema
   fastify.post("/test-schema", async (request, reply) => {
     const body = request.body ?? {};
+
+    if (body.testId) {
+      const testOid = toObjectId(body.testId);
+      if (!testOid) return reply.code(400).send({ message: "Invalid testId format" });
+      body.testId = testOid;
+    }
+
     const doc = {
       ...body,
       isActive: body.isActive ?? true,
