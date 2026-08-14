@@ -183,7 +183,6 @@ async function getAllowedPermissions() {
   if (permsCache.data && now - permsCache.fetchedAt < PERMS_CACHE_TTL_MS) {
     return permsCache.data;
   }
-
   const res = await fetch(`${process.env.LAB_API_INTERNAL_URL}/internal/permissions`, {
     headers: { "x-internal-secret": process.env.INTERNAL_SECRET },
   });
