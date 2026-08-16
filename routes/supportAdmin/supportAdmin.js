@@ -131,7 +131,7 @@ async function supportAdminRoutes(fastify) {
     const supportPhone = phone || DEFAULT_SUPPORT_PHONE;
     const ttlMinutes = validityMinutes || DEFAULT_SUPPORT_TTL_MINUTES;
     const now = new Date();
-    const supportSuffix = suffix ? suffix.toUpperCase() : undefined;
+    const supportSuffix = suffix ? suffix : undefined;
 
     // Block creation if a still-live support admin exists either for this
     // lab, or on this phone number. The phone check matters even across
