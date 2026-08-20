@@ -40,7 +40,7 @@ await fastify.register(cors, {
   origin: [
     "https://lpadmin.netlify.app",
     "https://scan.labpilotpro.com",
-    "https://lp-scan.netlify.app/",
+    "https://lp-scan.netlify.app",
     "http://localhost:5173",
     "http://localhost:5174",
   ],
