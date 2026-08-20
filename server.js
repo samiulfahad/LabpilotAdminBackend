@@ -22,7 +22,6 @@ import billingRoutes from "./routes/billing/billing.js";
 import supportAdminRoutes from "./routes/supportAdmin/supportAdmin.js";
 import { generateMonthlyBills } from "./jobs/generateMonthlyBills.js";
 
-
 // Scan Route
 import scanRoutes from "./routes/scan/ScanRoute.js";
 
@@ -38,7 +37,13 @@ const fastify = Fastify({
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
 await fastify.register(cors, {
-  origin: ["https://lpadmin.netlify.app", "https://scan.labpilotpro.com", "https://aesthetic-daifuku-9f9e56.netlify.app/", "http://localhost:5173", "http://localhost:5174"],
+  origin: [
+    "https://lpadmin.netlify.app",
+    "https://scan.labpilotpro.com",
+    "https://lp-scan.netlify.app/",
+    "http://localhost:5173",
+    "http://localhost:5174",
+  ],
   methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
   credentials: true,
 });
