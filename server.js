@@ -22,6 +22,10 @@ import billingRoutes from "./routes/billing/billing.js";
 import supportAdminRoutes from "./routes/supportAdmin/supportAdmin.js";
 import { generateMonthlyBills } from "./jobs/generateMonthlyBills.js";
 
+
+// Scan Route
+import scanRoutes from "./routes/scan/ScanRoute.js";
+
 const fastify = Fastify({
   disableRequestLogging: true,
   logger: {
@@ -57,6 +61,7 @@ fastify.register(zoneRoutes, { prefix: API });
 fastify.register(testSchemaRoutes, { prefix: API });
 fastify.register(demoReportRoutes, { prefix: API });
 fastify.register(billingRoutes, { prefix: API });
+fastify.register(scanRoutes, { prefix: API });
 
 // ── Health check ──────────────────────────────────────────────────────────────
 fastify.get("/health", async () => ({ status: "ok" }));
