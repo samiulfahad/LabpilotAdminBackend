@@ -13,6 +13,10 @@ import toObjectId from "../../utils/db.js";
  * protects against cross-lab enumeration.
  *
  * Response is pre-shaped for the frontend to render directly:
+ *   - labId + invoiceId, so the frontend can call the per-test report
+ *     endpoint later without depending on the URL route params (the
+ *     in-app camera scanner flow has no route params — only the QR
+ *     landing-page flow does)
  *   - patient info
  *   - payment info (final/paid/due + isFullyPaid)
  *   - test list with testId, name, online/offline flag, and per-test completion
@@ -145,6 +149,11 @@ async function scanRoutes(fastify) {
 
       return reply.send({
         invoiceId: invoice.invoiceId,
+        // Echo the validated route param back — the in-app camera scanner
+        // flow has no URL route params to fall back on (only the printed
+        // QR "landing page" flow does), so the frontend needs this in the
+        // payload to call the per-test report endpoint afterward.
+        labId,
         createdAt: invoice.createdAt,
 
         patient: {
