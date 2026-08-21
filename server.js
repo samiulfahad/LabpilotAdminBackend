@@ -24,7 +24,6 @@ import { generateMonthlyBills } from "./jobs/generateMonthlyBills.js";
 
 // Scan Route
 import scanRoutes from "./routes/scan/ScanRoute.js";
-import scanReportRoutes from "./routes/scanReport/scanReportRoute.js";
 
 const fastify = Fastify({
   disableRequestLogging: true,
@@ -68,7 +67,6 @@ fastify.register(testSchemaRoutes, { prefix: API });
 fastify.register(demoReportRoutes, { prefix: API });
 fastify.register(billingRoutes, { prefix: API });
 fastify.register(scanRoutes, { prefix: API });
-fastify.register(scanReportRoutes, { prefix: API });
 
 // ── Health check ──────────────────────────────────────────────────────────────
 fastify.get("/health", async () => ({ status: "ok" }));
