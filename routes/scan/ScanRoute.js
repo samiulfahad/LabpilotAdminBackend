@@ -15,7 +15,7 @@ import toObjectId from "../../utils/db.js";
  * Response is pre-shaped for the frontend to render directly:
  *   - patient info
  *   - payment info (final/paid/due + isFullyPaid)
- *   - test list with name, online/offline flag, and per-test completion
+ *   - test list with testId, name, online/offline flag, and per-test completion
  *   - aggregate counts (total/online/offline, completed online count)
  *   - canDownloadReports: true only when the invoice is fully paid AND
  *     every online test's report is completed. Offline tests have no
@@ -96,6 +96,7 @@ async function scanRoutes(fastify) {
             "referrer.type": 1,
             "doctor.name": 1,
             "doctor.degree": 1,
+            "tests.testId": 1,
             "tests.name": 1,
             "tests.price": 1,
             "tests.schemaId": 1,
@@ -120,6 +121,7 @@ async function scanRoutes(fastify) {
       const tests = (invoice.tests || []).map((t) => {
         const isOnline = !!t.schemaId;
         return {
+          testId: t.testId?.toString() ?? null,
           name: t.name,
           price: t.price,
           isOnline,
