@@ -39,9 +39,8 @@ const fastify = Fastify({
 // ── CORS ──────────────────────────────────────────────────────────────────────
 await fastify.register(cors, {
   origin: [
-    "https://lpadmin.netlify.app",
     "https://scan.labpilotpro.com",
-    "https://lp-scan.netlify.app",
+    "https://sfkingo.labpilotpro.com",
     "http://localhost:5173",
     "http://localhost:5174",
   ],
