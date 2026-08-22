@@ -157,7 +157,6 @@ async function authRoutes(fastify) {
       id: admin._id.toString(),
       username: admin.username,
       phone: admin.phone,
-      role: "admin",
     };
 
     const deviceId = randomUUID();
@@ -228,7 +227,6 @@ async function authRoutes(fastify) {
       id: decoded.id,
       username: decoded.username,
       phone: decoded.phone,
-      role: "admin",
     };
 
     const presentedHash = fastify.hashToken(refreshToken);

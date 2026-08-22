@@ -95,7 +95,6 @@ async function supportAdminRoutes(fastify) {
   // this onRequest hook only affects routes declared in this context — it
   // won't leak onto sibling plugins registered alongside it.
   fastify.addHook("onRequest", fastify.authenticate);
-  fastify.addHook("onRequest", fastify.requireAdmin);
 
   const adminsCollection = () => fastify.mongo.db.collection("supportAdmins");
   const labsCollection = () => fastify.mongo.db.collection("labs");

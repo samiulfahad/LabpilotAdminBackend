@@ -20,6 +20,7 @@ import testSchemaRoutes from "./routes/testSchema/testSchema.js";
 import demoReportRoutes from "./routes/demoReport/demoReport.js";
 import billingRoutes from "./routes/billing/billing.js";
 import supportAdminRoutes from "./routes/supportAdmin/supportAdmin.js";
+import supportInboxRoutes from "./routes/supportInbox/supportInboxRoutes.js";
 import { generateMonthlyBills } from "./jobs/generateMonthlyBills.js";
 
 // Scan Route
@@ -58,6 +59,7 @@ const API = "/v1";
 
 fastify.register(authRoutes, { prefix: API });
 fastify.register(supportAdminRoutes, { prefix: API });
+fastify.register(supportInboxRoutes, { prefix: API });
 fastify.register(categoryRoutes, { prefix: API });
 fastify.register(testRoutes, { prefix: API });
 fastify.register(labRoutes, { prefix: API });
