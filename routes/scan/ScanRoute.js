@@ -1,22 +1,3 @@
-// scanRoutes.js  (public backend)
-//
-// Powers the public QR/link "scan" flow — a patient scans a code printed on
-// their invoice to check status and view/download completed reports. No
-// fastify.authenticate hook on either route: there's no JWT here, so labId
-// is required in every path to scope the lookup and prevent cross-lab
-// enumeration.
-//
-// GET /scan/:labId/:invoiceId
-//   Invoice summary + test list + lab letterhead (name/address), shaped
-//   for the frontend to render directly.
-//
-// GET /scan/:labId/:invoiceId/report/:testId
-//   A single completed test's report, for viewing/printing. A4 only — no
-//   pad support in this project, always returns full lab header info.
-//   Re-derives the same gate the frontend uses to decide whether to show
-//   View/Download (fully paid, online test, completed) so a crafted
-//   request can't skip it.
-
 import toObjectId from "../../utils/db.js";
 
 const HEX24 = /^[a-fA-F0-9]{24}$/;
