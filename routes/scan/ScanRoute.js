@@ -107,8 +107,6 @@ async function scanRoutes(fastify) {
               "patient.gender": 1,
               "patient.age": 1,
               "patient.contactNumber": 1,
-              "referrer.name": 1,
-              "referrer.type": 1,
               "doctor.name": 1,
               "doctor.degree": 1,
               "tests.testId": 1,
@@ -175,7 +173,6 @@ async function scanRoutes(fastify) {
           contactNumber: invoice.patient?.contactNumber ?? "",
         },
 
-        referrer: invoice.referrer?.name ? { name: invoice.referrer.name, type: invoice.referrer.type ?? null } : null,
         doctor: invoice.doctor?.name ? { name: invoice.doctor.name, degree: invoice.doctor.degree ?? null } : null,
 
         payment: { paymentMode: invoice.paymentMode, final, paid, due, isFullyPaid },
@@ -244,7 +241,6 @@ async function scanRoutes(fastify) {
           gender: invoice.patient?.gender ?? "",
           contactNumber: invoice.patient?.contactNumber ?? "",
         },
-        referrer: invoice.referrer ? { name: invoice.referrer.name } : null,
         labInfo: shapeLabInfo(lab),
       });
     } catch (err) {
