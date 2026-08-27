@@ -241,6 +241,7 @@ async function scanRoutes(fastify) {
           gender: invoice.patient?.gender ?? "",
           contactNumber: invoice.patient?.contactNumber ?? "",
         },
+        doctor: invoice.doctor?.name ? { name: invoice.doctor.name, degree: invoice.doctor.degree ?? null } : null,
         labInfo: shapeLabInfo(lab),
       });
     } catch (err) {
