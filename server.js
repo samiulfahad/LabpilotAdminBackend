@@ -24,7 +24,7 @@ import supportInboxRoutes from "./routes/supportInbox/supportInboxRoutes.js";
 import { generateMonthlyBills } from "./jobs/generateMonthlyBills.js";
 
 // Scan Route for online report status
-import scanRoutes from "./routes/scan/scanRoute.js";
+import scanRoute from "./routes/scan/scanRoute.js";
 
 const fastify = Fastify({
   disableRequestLogging: true,
@@ -67,7 +67,7 @@ fastify.register(zoneRoutes, { prefix: API });
 fastify.register(testSchemaRoutes, { prefix: API });
 fastify.register(demoReportRoutes, { prefix: API });
 fastify.register(billingRoutes, { prefix: API });
-fastify.register(scanRoutes, { prefix: API });
+fastify.register(scanRoute, { prefix: API });
 
 // ── Health check ──────────────────────────────────────────────────────────────
 fastify.get("/health", async () => ({ status: "ok" }));
