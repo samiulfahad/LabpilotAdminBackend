@@ -24,7 +24,7 @@ import supportInboxRoutes from "./routes/supportInbox/supportInboxRoutes.js";
 import { generateMonthlyBills } from "./jobs/generateMonthlyBills.js";
 
 // Scan Route
-import scanRoutes from "./routes/scan/ScanRoute.js";
+import scanRoutes from "./routes/scan/scanRoute.js";
 
 const fastify = Fastify({
   disableRequestLogging: true,
