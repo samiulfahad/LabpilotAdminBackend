@@ -23,7 +23,7 @@ import supportAdminRoutes from "./routes/supportAdmin/supportAdmin.js";
 import supportInboxRoutes from "./routes/supportInbox/supportInboxRoutes.js";
 import { generateMonthlyBills } from "./jobs/generateMonthlyBills.js";
 
-// Scan Route
+// Scan Route for online report status
 import scanRoutes from "./routes/scan/scanRoute.js";
 
 const fastify = Fastify({
