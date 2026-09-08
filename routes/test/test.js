@@ -69,6 +69,13 @@ export default async function testRoutes(fastify) {
     return fastify.mongo.db.collection("testSchemas");
   }
 
+  // Lab-owned test docs (testRoutes.js) copy `name`/`categoryId` from the
+  // catalog test at creation time — these need to stay in sync whenever the
+  // catalog test is renamed or recategorized, across every lab that has it.
+  function labTestsCol() {
+    return fastify.mongo.db.collection("tests");
+  }
+
   // GET /test/all
   fastify.get("/test/all", { schema: listTestsSchema }, async (request) => {
     const filter = {};
@@ -120,6 +127,12 @@ export default async function testRoutes(fastify) {
   // defaultSchemaId, when non-null, must reference a schema that actually
   // belongs to this test (testSchemas.testId === id) — otherwise a test
   // could be pointed at another test's schema by mistake.
+  //
+  // When name/categoryId change here, every lab's `tests` doc that
+  // references this catalog test (tests.testId === id) is denormalized —
+  // it copied these fields at creation time — so we cascade the same
+  // fields into the `tests` collection via updateMany, scoped by testId
+  // (intentionally unscoped by labId — this cascades across all labs).
   fastify.patch("/test/:id", { schema: updateTestSchema }, async (request, reply) => {
     const id = toObjectId(request.params.id);
     if (!id) return reply.code(400).send({ message: "Invalid ID format" });
@@ -163,6 +176,18 @@ export default async function testRoutes(fastify) {
     const result = await col().findOneAndUpdate({ _id: id }, { $set: updates }, { returnDocument: "after" });
 
     if (!result) return reply.code(404).send({ message: "Test not found" });
+
+    // Cascade only the fields a lab's `tests` doc actually copies from the
+    // catalog (name, categoryId) — defaultSchemaId lives solely on the
+    // catalog test and is deliberately not part of this sync.
+    const cascade = {};
+    if (updates.name !== undefined) cascade.name = updates.name;
+    if (updates.categoryId !== undefined) cascade.categoryId = updates.categoryId;
+
+    if (Object.keys(cascade).length > 0) {
+      await labTestsCol().updateMany({ testId: id }, { $set: cascade });
+    }
+
     return result;
   });
 
