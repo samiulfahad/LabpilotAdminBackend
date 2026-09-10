@@ -40,6 +40,11 @@ export default async function schemaRoutes(fastify) {
     return fastify.mongo.db.collection("testCatalog");
   }
 
+  // Separate "tests" collection that also references a schema via schemaId
+  function testsCol() {
+    return fastify.mongo.db.collection("tests");
+  }
+
   // GET /test-schema/all
   fastify.get("/test-schema/all", { schema: listSchemasSchema }, async () => {
     const docs = await col().find({}).sort({ createdAt: -1 }).toArray();
@@ -143,22 +148,30 @@ export default async function schemaRoutes(fastify) {
   });
 
   // DELETE /test-schema/:id
-  // Blocked if any test currently points to this schema as its default —
-  // must be unset (by making another schema default) before it can be deleted.
+  // Instead of blocking deletion when the schema is in use, this now clears
+  // any references to it first, then deletes it:
+  //   - testCatalog.defaultSchemaId -> null (wherever it matches this schema)
+  //   - tests.schemaId              -> null (wherever it matches this schema)
   fastify.delete("/test-schema/:id", { schema: deleteSchemaSchema }, async (request, reply) => {
     const id = toObjectId(request.params.id);
     if (!id) return reply.code(400).send({ message: "Invalid ID format" });
 
-    const test = await testCol().findOne({ defaultSchemaId: id });
-    if (test) {
-      return reply
-        .code(422)
-        .send({ message: `Cannot delete: this schema is set as the default schema for "${test.name}"` });
-    }
+    const existing = await col().findOne({ _id: id });
+    if (!existing) return reply.code(404).send({ message: "Test schema not found" });
+
+    // Clear references in both collections before deleting the schema
+    const [catalogResult, testsResult] = await Promise.all([
+      testCol().updateMany({ defaultSchemaId: id }, { $set: { defaultSchemaId: null } }),
+      testsCol().updateMany({ schemaId: id }, { $set: { schemaId: null } }),
+    ]);
 
     const result = await col().deleteOne({ _id: id });
     if (result.deletedCount === 0) return reply.code(404).send({ message: "Test schema not found" });
 
-    return { message: "Test schema deleted successfully" };
+    return {
+      message: "Test schema deleted successfully",
+      clearedDefaultSchemaIdCount: catalogResult.modifiedCount,
+      clearedSchemaIdCount: testsResult.modifiedCount,
+    };
   });
 }
