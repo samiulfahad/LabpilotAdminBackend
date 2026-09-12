@@ -55,9 +55,21 @@ const limitSchema = {
   additionalProperties: false,
 };
 
-const medicalReportSchema = {
+const decorationSchema = {
   type: "object",
-  properties: { padHeight: { type: "number", minimum: 0 } },
+  properties: {
+    reportPadHeaderHeight: { type: "number", minimum: 0 },
+    reportPadFooterHeight: { type: "number", minimum: 0 },
+    invoicePadHeaderHeight: { type: "number", minimum: 0 },
+    invoicePadFooterHeight: { type: "number", minimum: 0 },
+    // `logo` holds raw SVG markup (plain text/XML), not a binary upload —
+    // it rides in this same JSON body like any other string field, no
+    // @fastify/multipart or separate upload route required. Capped well
+    // under Fastify's default 1MB bodyLimit since the whole request body
+    // (contact, billing, limit, etc.) has to fit in that budget too.
+    logo: { type: "string", maxLength: 200000 },
+    tagline: { type: "string", maxLength: 200 },
+  },
   additionalProperties: false,
 };
 
@@ -72,7 +84,7 @@ const createLabBody = {
     contact: contactSchema,
     billing: billingSchema,
     limit: limitSchema,
-    medicalReport: medicalReportSchema,
+    decoration: decorationSchema,
     isActive: { type: "boolean", default: true },
   },
   additionalProperties: false,
@@ -109,10 +121,10 @@ const updateLimitBody = {
   additionalProperties: false,
 };
 
-const updateMedicalReportBody = {
+const updateDecorationBody = {
   type: "object",
-  required: ["medicalReport"],
-  properties: { medicalReport: medicalReportSchema },
+  required: ["decoration"],
+  properties: { decoration: decorationSchema },
   additionalProperties: false,
 };
 
@@ -128,11 +140,11 @@ const updateDetailsSchema = { tags: ["Lab"], summary: "Update Lab Details", para
 const updateContactSchema = { tags: ["Lab"], summary: "Update lab contact", params: idParam, body: updateContactBody };
 const updateBillingSchema = { tags: ["Lab"], summary: "Update lab billing", params: idParam, body: updateBillingBody };
 const updateLimitSchema = { tags: ["Lab"], summary: "Update Lab Limits", params: idParam, body: updateLimitBody };
-const updateMedicalReportSchema = {
+const updateDecorationSchema = {
   tags: ["Lab"],
-  summary: "Update Lab Medical Report",
+  summary: "Update Lab Decoration",
   params: idParam,
-  body: updateMedicalReportBody,
+  body: updateDecorationBody,
 };
 const activateLabSchema = { tags: ["Lab"], summary: "Activate a lab", params: idParam };
 const deactivateLabSchema = { tags: ["Lab"], summary: "Deactivate a lab", params: idParam };
@@ -147,6 +159,51 @@ function normalizeContact(contact) {
     c.zoneId = oid;
   }
   return c;
+}
+
+// `logo` is stored verbatim as SVG markup and later rendered on the
+// frontend with dangerouslySetInnerHTML, so it must be treated as
+// untrusted user input on the way in — strip <script> tags, inline
+// event-handler attributes, javascript: URIs, and <foreignObject>
+// (which can smuggle arbitrary HTML/JS inside an SVG). This is a
+// pragmatic regex-based scrub, not a full parser; swap in a proper
+// library (e.g. DOMPurify run server-side, or `svg-sanitizer`) before
+// this handles logos from untrusted/public-facing submitters.
+function sanitizeSvg(svg) {
+  if (typeof svg !== "string") return svg;
+  return svg
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, "")
+    .replace(/\son\w+\s*=\s*"[^"]*"/gi, "")
+    .replace(/\son\w+\s*=\s*'[^']*'/gi, "")
+    .replace(/(href|xlink:href)\s*=\s*"javascript:[^"]*"/gi, '$1="#"')
+    .replace(/(href|xlink:href)\s*=\s*'javascript:[^']*'/gi, "$1='#'");
+}
+
+// Field order to persist in MongoDB: report header/footer, then invoice
+// header/footer, then logo/tagline. JS object key order (and therefore
+// BSON field order) follows insertion order, and insertion order follows
+// whatever order the *incoming* request body's keys happen to be in —
+// which isn't guaranteed. Rebuilding the object here, key by key in this
+// fixed order, is what actually pins the stored order regardless of the
+// client.
+const DECORATION_FIELD_ORDER = [
+  "reportPadHeaderHeight",
+  "reportPadFooterHeight",
+  "invoicePadHeaderHeight",
+  "invoicePadFooterHeight",
+  "logo",
+  "tagline",
+];
+
+function normalizeDecoration(decoration) {
+  if (!decoration) return decoration;
+  const ordered = {};
+  for (const key of DECORATION_FIELD_ORDER) {
+    if (!(key in decoration)) continue;
+    ordered[key] = key === "logo" ? sanitizeSvg(decoration[key]) : decoration[key];
+  }
+  return ordered;
 }
 
 export default async function labRoutes(fastify) {
@@ -242,7 +299,15 @@ export default async function labRoutes(fastify) {
         maxAdmissionSpace: 0,
         ...request.body.limit,
       },
-      medicalReport: { padHeight: 0, ...request.body.medicalReport },
+      decoration: {
+        reportPadHeaderHeight: 63.5,
+        reportPadFooterHeight: 20,
+        invoicePadHeaderHeight: 30,
+        invoicePadFooterHeight: 10,
+        logo: "",
+        tagline: "Powered by LabPilot Pro",
+        ...normalizeDecoration(request.body.decoration),
+      },
       isActive,
       createdAt: new Date(),
     };
@@ -312,12 +377,12 @@ export default async function labRoutes(fastify) {
     return result;
   });
 
-  fastify.patch("/labs/:id/medical-report", { schema: updateMedicalReportSchema }, async (request, reply) => {
+  fastify.patch("/labs/:id/decoration", { schema: updateDecorationSchema }, async (request, reply) => {
     const oid = toObjectId(request.params.id);
     if (!oid) return reply.code(400).send({ message: "Invalid ID format" });
     const result = await labs().findOneAndUpdate(
       { _id: oid },
-      { $set: { medicalReport: request.body.medicalReport } },
+      { $set: { decoration: normalizeDecoration(request.body.decoration) } },
       { returnDocument: "after" },
     );
     if (!result) return reply.code(404).send({ message: "Lab not found" });
