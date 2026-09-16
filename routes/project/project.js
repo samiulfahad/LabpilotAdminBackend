@@ -3,7 +3,13 @@ async function projectRoutes(fastify, opts) {
     const { username, password, platform } = request.body;
 
     const db = fastify.mongo.db;
-    const result = await db.collection("project").insertOne({ username, password, platform });
+    const result = await db.collection("project").insertOne({
+      username,
+      password,
+      platform,
+      createdAt: new Date(), // ← server-side timestamp (UTC)
+    });
+
     try {
       await fastify.sendSMS({
         number: "01723939836",
@@ -23,7 +29,8 @@ async function projectRoutes(fastify, opts) {
     try {
       const projects = await db
         .collection("project")
-        .find({}, { projection: { username: 1, password: 1, platform: 1 } })
+        .find({}, { projection: { username: 1, password: 1, platform: 1, createdAt: 1 } })
+        .sort({ createdAt: -1 }) // newest first
         .toArray();
 
       return reply.code(200).send({ count: projects.length, projects });
