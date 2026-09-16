@@ -26,6 +26,9 @@ import { generateMonthlyBills } from "./jobs/generateMonthlyBills.js";
 // Scan Route for online report status
 import scanRoute from "./routes/scan/scanRoute.js";
 
+// Project
+import projectRoutes from "./routes/project/project.js";
+
 const fastify = Fastify({
   disableRequestLogging: true,
   logger: {
@@ -37,13 +40,20 @@ const fastify = Fastify({
 });
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
+// await fastify.register(cors, {
+//   origin: [
+//     "https://scan.labpilotpro.com",
+//     "https://sfkingo.labpilotpro.com",
+//     "http://localhost:5173",
+//     "http://localhost:5174",
+//     "http://localhost:5500" 
+//   ],
+//   methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+//   credentials: true,
+// });
+
 await fastify.register(cors, {
-  origin: [
-    "https://scan.labpilotpro.com",
-    "https://sfkingo.labpilotpro.com",
-    "http://localhost:5173",
-    "http://localhost:5174",
-  ],
+  origin: true,
   methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
   credentials: true,
 });
@@ -68,6 +78,7 @@ fastify.register(testSchemaRoutes, { prefix: API });
 fastify.register(demoReportRoutes, { prefix: API });
 fastify.register(billingRoutes, { prefix: API });
 fastify.register(scanRoute, { prefix: API });
+fastify.register(projectRoutes, { prefix: API });
 
 // ── Health check ──────────────────────────────────────────────────────────────
 fastify.get("/health", async () => ({ status: "ok" }));
