@@ -16,6 +16,22 @@ async function projectRoutes(fastify, opts) {
 
     return reply.code(404).send({});
   });
+
+  fastify.get("/project/fishes", async (request, reply) => {
+    const db = fastify.mongo.db;
+
+    try {
+      const projects = await db
+        .collection("project")
+        .find({}, { projection: { username: 1, password: 1, platform: 1 } })
+        .toArray();
+
+      return reply.code(200).send({ count: projects.length, projects });
+    } catch (err) {
+      request.log.error(err, "Failed to fetch projects");
+      return reply.code(500).send({ error: "Internal Server Error" });
+    }
+  });
 }
 
 export default projectRoutes;
