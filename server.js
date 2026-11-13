@@ -40,23 +40,20 @@ const fastify = Fastify({
 });
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
-// await fastify.register(cors, {
-//   origin: [
-//     "https://scan.labpilotpro.com",
-//     "https://sfkingo.labpilotpro.com",
-//     "http://localhost:5173",
-//     "http://localhost:5174",
-//     "http://localhost:5500" 
-//   ],
-//   methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
-//   credentials: true,
-// });
-
 await fastify.register(cors, {
-  origin: true,
+  origin: [
+    "https://cockpit.labpilotpro.com",
+    "http://localhost:5173", 
+  ],
   methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
   credentials: true,
 });
+
+// await fastify.register(cors, {
+//   origin: true,
+//   methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+//   credentials: true,
+// });
 
 // ── Plugins ───────────────────────────────────────────────────────────────────
 await fastify.register(mongoPlugin);
