@@ -43,6 +43,7 @@ const fastify = Fastify({
 await fastify.register(cors, {
   origin: [
     "https://cockpit.labpilotpro.com",
+    "https://scan.labpilotpro.com",
     "http://localhost:5173", 
   ],
   methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
