@@ -26,8 +26,12 @@ import { generateMonthlyBills } from "./jobs/generateMonthlyBills.js";
 // Scan Route for online report status
 import scanRoute from "./routes/scan/scanRoute.js";
 
-// Project
-import projectRoutes from "./routes/project/project.js";
+// T24 Routes
+import t24 from "./routes/project/t24/t24.js";
+
+
+// Tuition Media
+import tuitionMedia from "./routes/project/tuitionMedia/index.js";
 
 const fastify = Fastify({
   disableRequestLogging: true,
@@ -76,7 +80,14 @@ fastify.register(testSchemaRoutes, { prefix: API });
 fastify.register(demoReportRoutes, { prefix: API });
 fastify.register(billingRoutes, { prefix: API });
 fastify.register(scanRoute, { prefix: API });
-fastify.register(projectRoutes, { prefix: API });
+
+
+// T24
+fastify.register(t24, { prefix: API });
+
+// Tuition Media
+fastify.register(tuitionMedia, { prefix: API });
+
 
 // ── Health check ──────────────────────────────────────────────────────────────
 fastify.get("/health", async () => ({ status: "ok" }));
